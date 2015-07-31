@@ -238,7 +238,7 @@ do
     {
         1
             {
-                $totaltime1 = Get-Date -Format "h:mm:ss"
+                $totaltime0 = Get-Date -Format "h:mm:ss"
                 # Give the user a chance to cancel before changes are made
                 Write-Warning "This makes permanent changes to the system. Press Ctrl+C now to cancel"
                 Sleep 5
