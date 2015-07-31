@@ -177,7 +177,7 @@ Else
 $computersys =  Get-WmiObject Win32_ComputerSystem -Computer $Global:hostname
 
 # Detect domain name, remove top level domain, convert to uppercase for future Trim operation
-$Global:domain = $computersys.Domain -replace ".com", "" -replace ".net", "" -replace ".org". ""
+$Global:domain = $computersys.Domain -replace ".com", "" -replace ".net", "" -replace ".org", ""
 $Global:domain = $Global:domain + "\"
 $Global:domain = $Global:domain.ToUpper()
 
