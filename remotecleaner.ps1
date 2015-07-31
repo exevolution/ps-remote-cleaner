@@ -1,6 +1,6 @@
 #requires -Version 3.0
 # This PowerShell script is designed to perform regular maintainance on domain computers
-# If you encounter any errors, please contact Elliott Berglund x8981
+# If you encounter any errors, please contact ExEvolution http://www.reddit.com/user/ExEvolution
 
 # Declare necessary, or maybe unnecessary global vars for functions
 $Global:hostname = $null
@@ -133,8 +133,8 @@ Do
 $logdate = Get-Date -Format "yyyyMMdd"
 
 Clear-Host
-"This PowerShell script is designed to perform regular maintainance on PennyMac virtual machines`n"
-"If you encounter any errors, please contact Elliott Berglund x8981`n"
+"This PowerShell script is designed to perform regular maintainance on domain computers`n"
+"If you encounter any errors, please contact ExEvolution http://www.reddit.com/user/ExEvolution`n"
 
 # Collect Computer Info
 Do
