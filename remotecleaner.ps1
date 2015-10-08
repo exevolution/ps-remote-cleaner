@@ -1,7 +1,7 @@
 #requires -Version 3.0
 #requires -RunAsAdministrator
 # This PowerShell script is designed to perform regular maintainance on domain computers
-# If you encounter any errors, please contact http://www.reddit.com/u/exevolution
+# If you encounter any errors, please contact ExEvolution http://www.reddit.com/u/exevolution
 $Runtime0 = Get-Date -Format 'HH:mm:ss'
 
 # Declare necessary, or maybe unnecessary global vars for functions
@@ -110,11 +110,11 @@ Function Remove-WithProgress
     "Collecting $Title, please wait..."
     
     # Start progress bar
-    Write-Progress -Id 0 -Activity 'Collecting' -PercentComplete -1
+    Write-Progress -Id 0 -Activity "Waiting for $Title list from $Global:HostName" -PercentComplete -1
     # Start timer
     $T0 = Get-Date -Format 'HH:mm:ss'
     # Count files, silence errors
-    $Files = Get-ChildItem -Force -Path "$Path\*" -Recurse -File -ErrorAction SilentlyContinue
+    $Files = Get-ChildItem -Force -LiteralPath "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory #| Where-Object {$_.PSIsContainer -eq $False}
     $T1 = Get-Date -Format 'HH:mm:ss'
     $T2 = New-TimeSpan -Start $T0 -End $T1
     "Operation completed in {0:c}" -f $T2
@@ -130,17 +130,52 @@ Function Remove-WithProgress
     "`n"
     "Removing $FileCount $Title... $TotalSize`GB."
     $T0 = Get-Date -Format 'HH:mm:ss'
+    
+    $Error.Clear()
     ForEach ($File in $Files)
     {
         $CurrentFileNumber++
         $FullFileName = $File.FullName
         $Percentage = [math]::Round(($CurrentFileNumber / $FileCount) * 100)
-        Remove-Item $File.FullName -Force -ErrorAction SilentlyContinue
         Write-Progress -Id 0 -Activity "Removing $Title" -CurrentOperation "File: $FullFileName" -PercentComplete $Percentage -Status "Progress: $CurrentFileNumber of $FileCount, $Percentage%"
+        Write-Verbose $FullFileName
+        Remove-Item -LiteralPath $FullFileName -Force -ErrorAction SilentlyContinue
     }
-    # Attempt to remove the empty subdirectories after, will not occur if locked files still exist
-    Remove-Item "$Path\*\" -Recurse -ErrorAction SilentlyContinue
 
+    # Show error count
+    If ($Error.Count -gt 0)
+    {
+        "{0} errors while removing files in {1}. Check error-$Global:HostName-$LogDate.txt for details." -f $Error.Count, $Title
+        $Error | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\error-$Global:HostName-$LogDate.txt" -Append
+        # Calculate remaining file count
+        $RemainingFiles = (Get-ChildItem -Force -Path "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory).Count
+        If ($RemainingFiles -gt 0)
+        {
+            "{0} files were not deleted" -f $RemainingFiles
+        }
+
+    }
+    
+
+    # Attempt to remove the empty subdirectories after, will not occur if locked files still exist
+    $Folders = Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory
+    ForEach ($Folder in $Folders)
+    {
+        # Count files in folder
+        $FolderCount = ($Folder | Measure-Object).Count
+        
+        # Full Folder Name
+        $FullFolderName = $Folder.FullName
+        
+        # If folder is empty
+        If ($FolderCount -eq 0)
+        {
+            # Remove empty folder
+            Write-Progress -Id 0 -Activity "Removing $Title" -CurrentOperation "Removing Empty Directory: $FullFolderName" -PercentComplete "-1"
+            Write-Verbose $FullFolderName
+            Remove-Item -LiteralPath $FullFolderName -Force -ErrorAction SilentlyContinue
+        }
+    }
     $T1 = Get-Date -Format 'HH:mm:ss'
     $T2 = New-TimeSpan -Start $T0 -End $T1
     "Operation Completed in {0:c}" -F $T2
@@ -152,6 +187,46 @@ Function Remove-WithProgress
     Return
 }
 
+function Test-Credential 
+{ 
+    [CmdletBinding()] 
+    [OutputType([Bool])] 
+    Param 
+    ( 
+        # Credential, Type PSCredential, The PSCredential Object to test. 
+        [Parameter(Position = 0, 
+                   ValueFromPipeLine = $true)] 
+        [PSCredential] 
+        $AdminCreds, 
+ 
+        # Domain, Type String, The domain name to test PSCredetianl Object against. 
+        [Parameter(Position = 1)] 
+        [String] 
+        $Domain = $env:USERDOMAIN 
+    ) 
+ 
+    Begin 
+    { 
+        if (-not($PSBoundParameters.ContainsValue($AdminCreds))) 
+        { 
+            $AdminCreds = Get-Credential -Credential $LocalAdmin
+        } 
+         
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices.AccountManagement") 
+        $PrincipalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Domain, $Domain) 
+    } 
+ 
+    Process 
+    { 
+        $NetworkCredential = $AdminCreds.GetNetworkCredential() 
+        return $PrincipalContext.ValidateCredentials($NetworkCredential.UserName, $NetworkCredential.Password) 
+    } 
+ 
+    End 
+    { 
+        $PrincipalContext.Dispose() 
+    } 
+}
 
 # ----------------
 # End Functions
@@ -160,13 +235,17 @@ Function Remove-WithProgress
 # Get Local Username
 $LocalAdmin = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
-# Check that user is an administrator, exit if not. Not necessary anymore, PowerShell has a built in detection #requires -RunAsAdministrator
-#If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator"))
-#{
-#    Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
-#    Sleep 5
-#    Exit 100
-#}
+# Validate Credentials for later remote PSSession
+$AdminCreds = Get-Credential -Credential $LocalAdmin
+If (Test-Credential $AdminCreds)
+    {
+        "Validated successfully, continuing"
+    }
+Else
+    {
+        "Admin Credentials not valid. Please run the script again."
+        Exit
+    }
 
 # Begin main program
 Do
@@ -175,8 +254,6 @@ Do
 $LogDate = Get-Date -Format 'yyyyMMdd'
 
 Clear-Host
-# Feel Free to create your own ANSI ascii art for this section
-# Mine requires 130 width in your PS window to work properly
 '                  ▄███████▄    ▄████████ ███▄▄▄▄   ███▄▄▄▄   ▄██   ▄     ▄▄▄▄███▄▄▄▄      ▄████████  ▄████████
                  ███    ███   ███    ███ ███▀▀▀██▄ ███▀▀▀██▄ ███   ██▄ ▄██▀▀▀███▀▀▀██▄   ███    ███ ███    ███
                  ███    ███   ███    █▀  ███   ███ ███   ███ ███▄▄▄███ ███   ███   ███   ███    ███ ███    █▀
@@ -197,7 +274,7 @@ Clear-Host
                                                 ▀                                                          ▀'
 ''
 'This PowerShell script is designed to perform regular maintainance on domain computers'
-'If you encounter any errors, please contact http://www.reddit.com/u/ExEvolution'
+'If you encounter any errors, please contact ExEvolution http://www.reddit.com/u/exevolution'
 "`n"
 
 # Collect Computer Info
@@ -263,7 +340,7 @@ If ($Global:DomainUser -eq $Null)
 }
 Else
 {
-    $ShortUser = $Global:DomainUser.Trim($Global:Domain)
+    $ShortUser = ($Global:DomainUser).Replace("$Global:Domain", '')
         
     # Get the most recently used active profile, store local path as administrative share in variable
     $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
@@ -273,10 +350,10 @@ Else
 }
 
 # Per-user log path setup
-$AdminLogPath = $LocalAdmin.Trim($Global:Domain)
+$AdminLogPath = ($LocalAdmin).Replace("$Global:Domain", '')
 
 # Check for per-user log directory, create if it does not exist
-If (Test-Path  "$PSScriptRoot\logs\$AdminLogPath\")
+If (Test-Path "$PSScriptRoot\logs\$AdminLogPath\")
 {
 'Log path exists, continuing...'
 }
@@ -311,6 +388,7 @@ do
     '[1] Automated Cleanup'
     '[2] Automatic Stale Profile Cleanup'
     '[3] Interactive Stale Profile Cleanup'
+    '[4] Attempt Printer Fix (Not Working)'
     '[I] More Information'
     '[D] Do Nothing, Move To Next Computer'
     '[Q] Quit'
@@ -340,17 +418,35 @@ do
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Local\Temp'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
 
                 # IE CACHE
                 # Progress Bar Title
-                $Title = 'Internet Exploder Cache Files'
+                $Title = 'Internet Exploder Cache Files (Windows 7)'
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Local\Microsoft\Windows\Temporary Internet Files'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
+                # IE CACHE
+                # Progress Bar Title
+                $Title = 'Internet Exploder Cache Files (Windows 8.1)'
+                # Relative path from user's profile directory
+                $Path1 = 'AppData\Local\Microsoft\Windows\INetCache'
+                $Path = "$Path0\$Path1"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
 
                 # CHROME CACHE
                 # Progress Bar Title
@@ -358,8 +454,11 @@ do
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Local\Google\Chrome\User Data\Default\Cache'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
 
                 # CHROME MEDIA CACHE
                 # Progress Bar Title
@@ -367,8 +466,11 @@ do
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Local\Google\Chrome\User Data\Default\Media Cache'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
 
                 # FIVE9 LOGS
                 # Progress Bar Title
@@ -376,8 +478,11 @@ do
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Roaming\Five9\Logs'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
                 
                 # FIVE9 INSTALLS
                 # Progress Bar Title
@@ -385,8 +490,11 @@ do
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Roaming\Five9.*'
                 $Path = "$Path0\$Path1"
-                # Call deletion with progress bar
-                Remove-WithProgress -Path "$Path"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
 
                 # DELPROF2
                 # Run DelProf2
@@ -421,6 +529,72 @@ do
             {
                 RunDelProf2 Prompt
                 GetFreeSpace Interactive DelProf2
+            }
+        4
+            {
+                # Log user off machine
+                $ShortUser
+                $UserSession = ((quser /server:$Global:HostName | ? { $_ -match $ShortUser }) -split ' +')[2]
+                logoff $UserSession /server:$Global:HostName 
+                
+                # Hook WinRM service on remote machine to allow PSSession
+                $RemoteWinRM = Get-Service -Name WinRM
+
+                # Start WinRM service on remote machine
+                If ($RemoteWinRM.Status -ne "Running")
+                {
+                    $RemoteWinRM.Start()
+                }
+                # Create a remote PSSession for printer work
+                $RemoteSession = New-PSSession -ComputerName $Global:HostName -Credential $AdminCreds
+                Invoke-Command -Session $RemoteSession -ScriptBlock {
+                    # Hook print spooler in PSSession
+                    $PSSessionSpooler = Get-Service -Name Spooler
+
+                    #Stop Spooler
+                    $PSSessionSpooler.Stop()
+
+                    # Remove required registry entries to allow removal of drivers
+                    If (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\Servers\")
+                    {
+                        Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\Servers\" -Force -Recurse
+                    }
+                    If (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\")
+                    {
+                        Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\" -Force -Recurse
+                    }
+                    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\" -Force
+                    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\Servers\" -Force
+                    
+                    # Start Spooler for the next steps
+                    $PSSessionSpooler.Start()
+
+                    # Remove all HP and Konica drivers
+                    Get-PrinterDriver | Where-Object {$_.Manufacturer -eq "HP" -or $_.Manufacturer -eq "KONICA MINOLTA"} | Remove-PrinterDriver
+
+                    # Run Logon Script through PSSession
+                    "$env:LOGONSERVER\NETLOGON\pnmac-logon.vbs"
+
+                }
+                Remove-PSSession $RemoteSession
+
+                # Hook remote print spooler
+                $RemoteSpooler = Get-Service -ComputerName $Global:HostName -Name Spooler
+
+                # Restart Print Spooler
+                $RemoteSpooler.Stop()
+                $RemoteSpooler.Start()
+
+                # Check spooler status
+                #If ($RemoteSpooler.Status -ne 'Stopped')
+                #{
+                #    # Stop spooler if it is running
+                #    "Stopping Print Spooler on $Global:HostName"
+                #    $RemoteSpooler.Stop()
+                #    $RemoteSpooler.WaitForStatus('Stopped')
+                #}
+
+                $RemoteWinRM.Stop()
             }
         I
             {
