@@ -2,6 +2,11 @@
 #requires -RunAsAdministrator
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
+If (!(Get-Module ActiveDirectory))
+{
+    Import-Module -Name ActiveDirectory -ErrorAction Stop
+}
+
 $Runtime0 = Get-Date
 
 # Declare necessary, or maybe unnecessary global vars for functions
@@ -10,6 +15,14 @@ $Global:HostEntry = $Null
 $Global:HostIP = $Null
 $Global:HostInfo = $Null
 $Global:DelProf = $Null
+
+# Set buffer and window size
+$PSHost = Get-Host
+$PSWindow = $PSHost.UI.RawUI
+$NewSize = $PSWindow.BufferSize
+$NewSize.Height = 3000
+$NewSize.Width = 150
+$PSWindow.BufferSize = $NewSize
 
 # ----------------
 # Define Functions
@@ -199,7 +212,7 @@ Function Remove-WithProgress
     Return
 }
 
-function Test-Credential 
+Function Test-Credential 
 { 
     [CmdletBinding()] 
     [OutputType([Bool])] 
@@ -248,16 +261,39 @@ function Test-Credential
 $LocalAdmin = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 # Validate Credentials for later remote PSSession
-$AdminCreds = Get-Credential -Credential $LocalAdmin
-If (Test-Credential $AdminCreds)
-    {
-        "Validated successfully, continuing"
-    }
-Else
-    {
-        "Admin Credentials not valid. Please run the script again."
-        Exit
-    }
+Do
+{
+    $AdminCreds = $Null
+    $ValidAdmin = $Null
+    $AdminCreds = Get-Credential -Credential $LocalAdmin
+    If ($AdminCreds -eq $Null)
+        {
+            "Cancelling"
+            "Please login with valid credentials to continue"
+            Sleep 3
+            Exit
+        }
+    If (Test-Credential $AdminCreds)
+        {
+            $ValidAdmin = $True
+        }
+    Else
+        {
+            "Invalid username or password"
+            Sleep 3
+        }
+}
+Until ($ValidAdmin -eq $True)
+
+# Check that user is Help desk admin or higher
+#$AdminADObject = $Null
+#$AdminMemberships = $Null
+#
+#$LocalAdmin = $AdminCreds.UserName.Split("\")[1]
+#$AdminADObject = Get-ADUser -Filter {SamAccountName -eq $LocalAdmin}
+#$AdminMemberships = Get-ADPrincipalGroupMembership $LocalAdmin | Select-Object Name | Sort-Object Name
+
+"Credentials validated, continuing"
 
 # Begin main program
 Do
@@ -438,7 +474,7 @@ If (($Corrupt -band $ProfileStatus) -eq $Corrupt)
 {
     Write-Warning "PROFILE CORRUPT! User profile rebuild necessary. Quitting."
     Sleep 10
-    Quit
+    Exit
 }
 
 # Per-admin log path setup
