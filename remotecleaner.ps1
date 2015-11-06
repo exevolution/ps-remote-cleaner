@@ -1,8 +1,8 @@
 #requires -Version 3.0
 #requires -RunAsAdministrator
 # This PowerShell script is designed to perform regular maintainance on domain computers
-# If you encounter any errors, please contact ExEvolution http://www.reddit.com/u/exevolution
-$Runtime0 = Get-Date -Format 'HH:mm:ss'
+# If you encounter any errors, please contact Elliott Berglund x8981
+$Runtime0 = Get-Date
 
 # Declare necessary, or maybe unnecessary global vars for functions
 $Global:HostName = $Null
@@ -50,7 +50,7 @@ Function RunDelProf2
             $VarAttend = ''
             }
     }
-    $T0 = Get-Date -Format 'HH:mm:ss'
+    $T0 = Get-Date
     'Deleting Stale User Profiles With DelProf2.'
     'Please wait... This may take several minutes.'
     "`n"
@@ -68,10 +68,11 @@ Function RunDelProf2
     {
         "DelProf2 encountered an error. Exit code $Global:DelProfExit"
     }
-    $T1 = Get-Date -Format 'HH:mm:ss'
+    $T1 = Get-Date
     $T2 = New-TimeSpan -Start $T0 -End $T1
-    "Operation Completed in {0:c}" -f $T2
-    "$Global:HostName | DelProf2 completed in $T2`n" | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
+    "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
+
+    "{0} | DelProf2 completed in {1:d2}:{2:d2}:{3:d2}`n" -F $Global:HostName,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
     Return
 }
 
@@ -103,21 +104,24 @@ Function Remove-WithProgress
     $Path
     )
     # Progress Bar counter
-    $CurrentFileNumber = 0
+    $CurrentFileCount = 0
+    $CurrentFolderCount = 0
     
     "`n"
     '--------------------------------------------------'
-    "Collecting $Title, please wait..."
+    "Enumerating $Title, please wait..."
     
     # Start progress bar
-    Write-Progress -Id 0 -Activity "Waiting for $Title list from $Global:HostName" -PercentComplete -1
+    Write-Progress -Id 0 -Activity "Enumerating $Title from $Global:HostName" -PercentComplete 0
+
     # Start timer
-    $T0 = Get-Date -Format 'HH:mm:ss'
-    # Count files, silence errors
-    $Files = Get-ChildItem -Force -LiteralPath "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory #| Where-Object {$_.PSIsContainer -eq $False}
-    $T1 = Get-Date -Format 'HH:mm:ss'
+    $T0 = Get-Date
+
+    # Enumerate files, silence errors
+    $Files = @(Get-ChildItem -Force -LiteralPath "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory) | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
+    $T1 = Get-Date
     $T2 = New-TimeSpan -Start $T0 -End $T1
-    "Operation completed in {0:c}" -f $T2
+    "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
     # Total file count for progress bar
     $FileCount = $Files.Count
@@ -125,30 +129,33 @@ Function Remove-WithProgress
     $TotalSize = [math]::Round($TotalSize / 1GB,3)
 
     # Write detailed info to runtime log
-    "`n$Global:HostName | $FileCount $Title gathered in $T2" | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
+    "`n{0} | {1} {2} enumerated in {3:d2}:{4:d2}:{5:d2}" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
 
     "`n"
     "Removing $FileCount $Title... $TotalSize`GB."
-    $T0 = Get-Date -Format 'HH:mm:ss'
+    $T0 = Get-Date
     
     $Error.Clear()
     ForEach ($File in $Files)
     {
-        $CurrentFileNumber++
+        $CurrentFileCount++
         $FullFileName = $File.FullName
-        $Percentage = [math]::Round(($CurrentFileNumber / $FileCount) * 100)
-        Write-Progress -Id 0 -Activity "Removing $Title" -CurrentOperation "File: $FullFileName" -PercentComplete $Percentage -Status "Progress: $CurrentFileNumber of $FileCount, $Percentage%"
+        $Percentage = [math]::Round(($CurrentFileCount / $FileCount) * 100)
+        Write-Progress -Id 0 -Activity "Removing $Title" -CurrentOperation "File: $FullFileName" -PercentComplete $Percentage -Status "Progress: $CurrentFileCount of $FileCount, $Percentage%"
         Write-Verbose $FullFileName
-        Remove-Item -LiteralPath $FullFileName -Force -ErrorAction SilentlyContinue
+        $File | Remove-Item -Force -ErrorAction SilentlyContinue
     }
+    Write-Progress -Id 0 -Completed -Activity 'Done'
 
     # Show error count
     If ($Error.Count -gt 0)
     {
-        "{0} errors while removing files in {1}. Check error-$Global:HostName-$LogDate.txt for details." -f $Error.Count, $Title
+        "{0} errors while removing files in {1}." -f $Error.Count, $Title
+        "Check error-$Global:HostName-$LogDate.txt for details."
         $Error | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\error-$Global:HostName-$LogDate.txt" -Append
-        # Calculate remaining file count
-        $RemainingFiles = (Get-ChildItem -Force -Path "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory).Count
+
+        # Enumerate remaining files
+        $RemainingFiles = @(Get-ChildItem -Force -Path "$Path" -Recurse -ErrorAction SilentlyContinue -Attributes !Directory).Count
         If ($RemainingFiles -gt 0)
         {
             "{0} files were not deleted" -f $RemainingFiles
@@ -158,32 +165,37 @@ Function Remove-WithProgress
     
 
     # Attempt to remove the empty subdirectories after, will not occur if locked files still exist
-    $Folders = Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory
-    ForEach ($Folder in $Folders)
+    $Folders = @(Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory) | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
+    $EmptyFolders = $Folders | Where-Object {$_.GetFiles().Count -eq 0}
+
+    # Enumerate empty folders
+    $EmptyCount = $EmptyFolders.Count
+
+    "Removing $EmptyCount empty folders"
+    $Title = 'Removing Empty Directories'
+
+    ForEach ($EmptyFolder in $EmptyFolders)
     {
-        # Count files in folder
-        $FolderCount = ($Folder | Measure-Object).Count
-        
+        # Increment Folder Counter
+        $CurrentFolderCount++
+
         # Full Folder Name
-        $FullFolderName = $Folder.FullName
+        $FullFolderName = $EmptyFolder.FullName
+
+        $Percentage = [math]::Round(($CurrentFolderCount / $EmptyCount) * 100)
         
-        # If folder is empty
-        If ($FolderCount -eq 0)
-        {
-            # Remove empty folder
-            Write-Progress -Id 0 -Activity "Removing $Title" -CurrentOperation "Removing Empty Directory: $FullFolderName" -PercentComplete "-1"
-            Write-Verbose $FullFolderName
-            Remove-Item -LiteralPath $FullFolderName -Force -ErrorAction SilentlyContinue
-        }
+        Write-Progress -Id 1 -Activity "Removing $Title" -CurrentOperation "Removing Empty Directory: $FullFolderName" -PercentComplete "$Percentage" -Status "Progress: $CurrentFolderCount of $EmptyCount, $Percentage%"
+        Write-Verbose $FullFolderName
+        $EmptyFolder | Remove-Item -Force -ErrorAction SilentlyContinue -Recurse
     }
-    $T1 = Get-Date -Format 'HH:mm:ss'
+    Write-Progress -Id 1 -Completed -Activity 'Done'
+    $T1 = Get-Date
     $T2 = New-TimeSpan -Start $T0 -End $T1
-    "Operation Completed in {0:c}" -F $T2
+    "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
     # Write detailed info to runtime log
-    "$Global:HostName | $FileCount $Title deleted in $T2 | $TotalSize`GB`n" | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
+    "{0} | {1} {2} deleted in {3:d2}:{4:d2}:{5:d2} | {6}GB`n" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds,$TotalSize | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
     '--------------------------------------------------'
-    Write-Progress -Id 0 'Done' 'Done' -Completed
     Return
 }
 
@@ -274,7 +286,7 @@ Clear-Host
                                                 ▀                                                          ▀'
 ''
 'This PowerShell script is designed to perform regular maintainance on domain computers'
-'If you encounter any errors, please contact ExEvolution http://www.reddit.com/u/exevolution'
+'If you encounter any errors, please contact Elliott Berglund x8981'
 "`n"
 
 # Collect Computer Info
@@ -333,7 +345,74 @@ $Global:DomainUser = $Global:DomainUser.UserName
 # If no user is logged in, prompt for the assigned user
 If ($Global:DomainUser -eq $Null)
 {
-    $ShortUser = Read-Host 'No active user detected. Please enter the assigned username from Horizon View Administrator'
+    # Store all non system profiles
+    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")}
+
+    # Store all profile SIDs in an array    
+    $SIDs = @($AllProfiles | Select-Object -ExpandProperty sid)
+
+    # Create blank hash table
+    $UserHashTable = $Null
+    $UserHashTable = @{}
+
+    # Use the SIDs to get the usernames from AD
+    $ProfileCount = $Null
+
+    ForEach ($SID in $SIDs)
+    {
+        $ProfileCount++
+        $UserHashTable.Add($ProfileCount, (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName)
+    }
+
+    If ($ProfileCount -eq 0)
+    {
+        "No user profiles on $Global:HostName. Please run again on a different computer"
+        Break
+    }
+
+    # Sort the hash table
+    $UserHashTable = $UserHashTable.GetEnumerator() | Sort-Object Name
+
+    # Output it, ask user to select a menu option
+    If ($ProfileCount -gt 1)
+    {
+        Do
+        {
+        # Display menu
+        "`nProfile Listing"
+        $UserHashTable
+
+        # Null important variables for loop
+        $ok = $Null
+        $SelectedUser = $Null
+
+        # Ask user for numeric input, 
+        $SelectedUser = Read-Host "`nPlease select the assigned user"
+        $SelectedUser = $SelectedUser -as [int32]
+        If ($SelectedUser -eq $Null -or $SelectedUser -eq "")
+            {
+                "`nYou must enter a numeric value"
+                Continue
+            }
+        # Subtract 1 for 0 indexed value
+        $SelectedUser = $SelectedUser - 1
+        If ($SelectedUser -gt ($ProfileCount - 1))
+            {
+                "`nYou have entered a value out of range, please choose a correct value"
+                Continue
+            }
+        $ok = $True
+        }
+        Until ($ok)
+
+        $ShortUser = ($UserHashTable[$SelectedUser]).Value
+        "You have selected $ShortUser"
+    }
+    Else
+    {
+        "`nOnly 1 profile was detected, selecting {0}`n" -F $UserHashTable[0].Value
+        $ShortUser = $UserHashTable[0].Value
+    }
 
     # Assume, based on entered information, the active profile
     $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
@@ -344,23 +423,31 @@ Else
         
     # Get the most recently used active profile, store local path as administrative share in variable
     $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
-
-    # Alternative method
-    #$ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.Loaded -eq 1 -and $_.Special -eq 0} | Sort-Object $_.LastUseTime | Select-Object -First 1
 }
 
-# Per-user log path setup
+# If profile status Bit Field includes 8 (corrupt profile), quit.
+$Corrupt = 8
+$ProfileStatus = $ActiveProfile.Status
+
+If (($Corrupt -band $ProfileStatus) -eq $Corrupt)
+{
+    Write-Warning "PROFILE CORRUPT! User profile rebuild necessary. Quitting."
+    Sleep 10
+    Quit
+}
+
+# Per-admin log path setup
 $AdminLogPath = ($LocalAdmin).Replace("$Global:Domain", '')
 
 # Check for per-user log directory, create if it does not exist
 If (Test-Path "$PSScriptRoot\logs\$AdminLogPath\")
 {
-'Log path exists, continuing...'
+    'Log path exists, continuing...'
 }
 Else
 {
-"Created log directory"
-New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath\"
+    "Created log directory"
+    New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath\"
 }
 
 # Grab local path from active profile
@@ -403,7 +490,7 @@ do
                 $ConfirmPreference = "High"
 
                 # Start cleanup timer
-                $TotalTime0 = Get-Date -Format 'HH:mm:ss'
+                $TotalTime0 = Get-Date
 
                 # Working Directory for relative paths
                 $Path0 = "$WorkingDirectory"
@@ -436,11 +523,35 @@ do
                     Remove-WithProgress -Path "$Path"
                 }
 
+                # IE COOKIES
+                # Progress Bar Title
+                $Title = 'Internet Exploder Cookies (Windows 7)'
+                # Relative path from user's profile directory
+                $Path1 = 'AppData\Roaming\Microsoft\Windows\Cookies'
+                $Path = "$Path0\$Path1"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
                 # IE CACHE
                 # Progress Bar Title
                 $Title = 'Internet Exploder Cache Files (Windows 8.1)'
                 # Relative path from user's profile directory
                 $Path1 = 'AppData\Local\Microsoft\Windows\INetCache'
+                $Path = "$Path0\$Path1"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
+                # IE COOKIES
+                # Progress Bar Title
+                $Title = 'Internet Exploder Cookies (Windows 8.1)'
+                # Relative path from user's profile directory
+                $Path1 = 'AppData\Local\Microsoft\Windows\INetCookies'
                 $Path = "$Path0\$Path1"
                 If (Test-Path "$Path")
                 {
@@ -472,6 +583,18 @@ do
                     Remove-WithProgress -Path "$Path"
                 }
 
+                # GOOGLE CHROME UPDATES
+                # Progress Bar Title
+                $Title = 'Google Chrome Update Files'
+                # Relative path from user's profile directory
+                $Path1 = 'AppData\Local\Google\Update'
+                $Path = "$Path0\$Path1"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
                 # FIVE9 LOGS
                 # Progress Bar Title
                 $Title = 'Five9 Log Files'
@@ -496,6 +619,26 @@ do
                     Remove-WithProgress -Path "$Path"
                 }
 
+                # C: DRIVE RECYCLE BIN
+                # Progress Bar Title
+                $Title = 'Recycle Bin Files on C: Drive'
+                $Path = "\\$Global:Hostname\c$\`$Recycle.Bin"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
+                # D: DRIVE RECYCLE BIN
+                # Progress Bar Title
+                $Title = 'Recycle Bin Files on D: Drive'
+                $Path = "\\$Global:Hostname\d$\`$Recycle.Bin"
+                If (Test-Path "$Path")
+                {
+                    # Call deletion with progress bar
+                    Remove-WithProgress -Path "$Path"
+                }
+
                 # DELPROF2
                 # Run DelProf2
                 "`n"
@@ -503,13 +646,10 @@ do
                 RunDelProf2 Unattended
                 '--------------------------------------------------'
 
-                Sleep 1
-                Write-Progress -Id 0 'Done' 'Done' -Completed
-
-                $TotalTime1 = Get-Date -Format "H:mm:ss"
+                $TotalTime1 = Get-Date
                 $TotalTime2 = New-TimeSpan -Start $TotalTime0 -End $TotalTime1
                 "`n"
-                "Automated Cleanup Completed in {0:c}" -f $TotalTime2
+                "Automated Cleanup Completed in {0:d2}:{1:d2}:{2:d2}" -F $TotalTime2.Hours,$TotalTime2.Minutes,$TotalTime2.Seconds
 
                 $ManualCleanup = $Null
                 $ManualCleanup = Get-WmiObject Win32_LogicalDisk -ComputerName $Global:HostName | Where-Object { $_.DeviceID -eq "$DriveLetter" -and $_.FreeSpace -lt 1073741824 }
@@ -611,14 +751,12 @@ do
             {
                 "`n"
                 "No further changes will be made to $Global:HostName"
-                Sleep 2
             }
         Q
             {
                 "`n"
                 "Quit. No further changes will be made to $Global:HostName"
                 GetFreeSpace Finish
-                Sleep 2
                 Exit
             }
         Default
@@ -644,6 +782,8 @@ $Rerun = Read-Host 'Choice'
 }
 until ($Rerun -eq 'Q')
 
-$Runtime1 = Get-Date -Format 'HH:mm:ss'
+# Elapsed Time, log to file
+$Runtime1 = Get-Date
 $Runtime2 = New-TimeSpan -Start $Runtime0 -End $Runtime1
-"Total Runtime: $Runtime2" | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
+
+"Elapsed Time: {0:d2}:{1:d2}:{2:d2}" -F $Runtime2.Hours,$Runtime2.Minutes,$Runtime2.Seconds | Tee-Object "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
