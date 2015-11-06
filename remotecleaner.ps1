@@ -345,6 +345,7 @@ $Global:DomainUser = $Global:DomainUser.UserName
 # If no user is logged in, prompt for the assigned user
 If ($Global:DomainUser -eq $Null)
 {
+    $ProfileCount = 0
     # Store all non system profiles
     $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")}
 
@@ -356,17 +357,21 @@ If ($Global:DomainUser -eq $Null)
     $UserHashTable = @{}
 
     # Use the SIDs to get the usernames from AD
-    $ProfileCount = $Null
-
     ForEach ($SID in $SIDs)
     {
+        $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
+        If ($AccountName -eq $Null)
+        {
+            "`n$SID does not exist in Active Directory, skipping"
+            Continue
+        }
         $ProfileCount++
-        $UserHashTable.Add($ProfileCount, (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName)
+        $UserHashTable.Add($ProfileCount, $AccountName)
     }
 
     If ($ProfileCount -eq 0)
     {
-        "No user profiles on $Global:HostName. Please run again on a different computer"
+        "No valid user profiles on $Global:HostName. Please run again on a different computer"
         Break
     }
 
@@ -374,13 +379,13 @@ If ($Global:DomainUser -eq $Null)
     $UserHashTable = $UserHashTable.GetEnumerator() | Sort-Object Name
 
     # Output it, ask user to select a menu option
-    If ($ProfileCount -gt 1)
+    If ($ProfileCount -ge 2)
     {
         Do
         {
         # Display menu
         "`nProfile Listing"
-        $UserHashTable
+        $UserHashTable.GetEnumerator()
 
         # Null important variables for loop
         $ok = $Null
@@ -394,11 +399,11 @@ If ($Global:DomainUser -eq $Null)
                 "`nYou must enter a numeric value"
                 Continue
             }
-        # Subtract 1 for 0 indexed value
+        # Subtract 1 from input for 0 indexed array
         $SelectedUser = $SelectedUser - 1
         If ($SelectedUser -gt ($ProfileCount - 1))
             {
-                "`nYou have entered a value out of range, please choose a correct value"
+                "`nYou have entered a value out of range, please choose a correct value`n"
                 Continue
             }
         $ok = $True
