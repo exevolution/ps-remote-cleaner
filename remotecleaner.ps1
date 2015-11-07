@@ -175,8 +175,11 @@ Function Remove-WithProgress
         }
 
     }
-    
+    $T1 = Get-Date
+    $T2 = New-TimeSpan -Start $T0 -End $T1
+    "{0} | {1} {2} deleted in {3:d2}:{4:d2}:{5:d2}`n | {6}GB`n" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds,$TotalSize
 
+    $T0 = Get-Date
     # Attempt to remove the empty subdirectories after, will not occur if locked files still exist
     $Folders = @(Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory) | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
     $EmptyFolders = $Folders | Where-Object {$_.GetFiles().Count -eq 0}
@@ -207,7 +210,7 @@ Function Remove-WithProgress
     "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
     # Write detailed info to runtime log
-    "{0} | {1} {2} deleted in {3:d2}:{4:d2}:{5:d2} | {6}GB`n" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds,$TotalSize | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
+    "{0} | {1} empty folders deleted in {2:d2}:{3:d2}:{4:d2}`n" -F $Global:HostName,$EmptyCount,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$PSScriptRoot\logs\$AdminLogPath\runtime-$LogDate.txt" -Append
     '--------------------------------------------------'
     Return
 }
