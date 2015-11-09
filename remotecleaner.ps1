@@ -384,7 +384,7 @@ $Global:DomainUser = (Get-WmiObject Win32_ComputerSystem -Computer $Global:HostN
 # If no user is logged in, prompt for the assigned user
 If ($Global:DomainUser -eq $Null)
 {
-    # Create blank hash table
+    # Create blank array (forced)
     $UserArray = $Null
     $UserArray = @()
 
