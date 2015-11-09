@@ -28,7 +28,7 @@ $PSWindow.BufferSize = $NewSize
 # Define Functions
 # ----------------
 
-Function GetFreeSpace
+Function Get-FreeSpace
 {
     # Define the FreeSpace calculator
     $Global:FreeSpace = Get-WmiObject Win32_LogicalDisk -ComputerName $Global:HostName |
@@ -37,16 +37,10 @@ Function GetFreeSpace
     Format-Table -AutoSize |
     Tee-Object -Append -File "$PSScriptRoot\logs\$AdminLogPath\bottleneckreport-$LogDate.txt"
 
-    # Output it
-    "`n"
-    '*******************************************************'
-    $Global:FreeSpace
-    '*******************************************************'
-    "`n"
-    Return
+    Return $Global:FreeSpace
 }
 
-Function RunDelProf2
+Function Run-DelProf2
 {
     Switch ($Args[0])
     {
@@ -89,7 +83,7 @@ Function RunDelProf2
     Return
 }
 
-Function ResolveHost
+Function Resolve-Host
 {
     If ($Global:HostEntry -As [IPAddress])
     {
@@ -177,7 +171,7 @@ Function Remove-WithProgress
     }
     $T1 = Get-Date
     $T2 = New-TimeSpan -Start $T0 -End $T1
-    "{0} {1} deleted in {2:d2}:{3:d2}:{4:d2}`n" -F $FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds
+    "{0} {1} deleted in {2:d2}:{3:d2}:{4:d2}`n" -F ($FileCount - $RemainingFiles),$Title,$T2.Hours,$T2.Minutes,$T2.Seconds
 
     $T0 = Get-Date
     # Attempt to remove the empty subdirectories after, will not occur if locked files still exist
@@ -222,9 +216,8 @@ Function Test-Credential
     Param 
     ( 
         # Credential, Type PSCredential, The PSCredential Object to test. 
-        [Parameter(Position = 0, 
-                   ValueFromPipeLine = $true)] 
-        [PSCredential] 
+        [Parameter(Position = 0, ValueFromPipeLine = $true)] 
+        [PSCredential]
         $AdminCreds, 
  
         # Domain, Type String, The domain name to test PSCredetianl Object against. 
@@ -235,7 +228,7 @@ Function Test-Credential
  
     Begin 
     { 
-        if (-not($PSBoundParameters.ContainsValue($AdminCreds))) 
+        If (-not($PSBoundParameters.ContainsValue($AdminCreds))) 
         { 
             $AdminCreds = Get-Credential -Credential $LocalAdmin
         } 
@@ -276,7 +269,7 @@ Do
             Sleep 3
             Exit
         }
-    If (Test-Credential $AdminCreds)
+    ElseIf (Test-Credential $AdminCreds)
         {
             $ValidAdmin = $True
         }
@@ -326,7 +319,7 @@ Clear-Host
 ''
 'This PowerShell script is designed to perform regular maintainance on domain computers'
 'If you encounter any errors, please contact Elliott Berglund x8981'
-"`n"
+''
 
 # Collect Computer Info
 Do
@@ -339,7 +332,7 @@ Do
 }
 While ($Global:HostEntry -eq '')
 
-ResolveHost
+Resolve-Host
 
 "`n"
 '-------------------------------------------------------'
@@ -390,13 +383,28 @@ If ($Global:DomainUser -eq $Null)
 
     # Store all non system profiles
     $AllProfiles = $Null
-    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")}
-    
+    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")} | Sort-Object LastUseTime -Descending
+
+<#    
     # Store all profile SIDs in an array
     $SIDs = $Null
     $SIDs = @($AllProfiles | Select-Object -ExpandProperty sid)
 
     # Use the SIDs to get the usernames from AD
+#>
+    ForEach ($Profile in $AllProfiles)
+    {
+        $AccountName = $Null
+        $SID = ($Profile | Select-Object -ExpandProperty sid)
+        $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
+        If ($AccountName -eq $Null)
+        {
+            "`n$SID does not exist in Active Directory, skipping"
+            Continue
+        }
+        $UserArray += "$AccountName"
+    }
+<#
     ForEach ($SID in $SIDs)
     {
         $AccountName = $Null
@@ -408,7 +416,7 @@ If ($Global:DomainUser -eq $Null)
         }
         $UserArray += "$AccountName"
     }
-
+#>
     If ($UserArray.Count -eq 0) {
         "No valid user profiles on $Global:HostName. Please run again on a different computer"
         Break
@@ -417,7 +425,7 @@ If ($Global:DomainUser -eq $Null)
     ElseIf ($UserArray.Count -eq 1)
     {
         "`nOnly 1 profile was detected, selecting {0}`n" -F $UserArray[0]
-        $SelectedUser = $UserArray[0]
+        $SelectedUser = 0
     }
     Else
     {
@@ -428,7 +436,7 @@ If ($Global:DomainUser -eq $Null)
             $SelectedUser = $Null
 
             # Display menu
-            "`nProfile Listing"
+            "`nProfile Listing (Most recently accessed on top)"
             # Sort the hash table and output it
             
             $Number = 0
@@ -459,7 +467,7 @@ If ($Global:DomainUser -eq $Null)
 
     }
     $ShortUser = $UserArray[$SelectedUser]
-    "You have selected $ShortUser"
+    "Selected: $ShortUser`n"
 
     # Assume, based on entered information, the active profile
     $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
@@ -512,7 +520,9 @@ $DriveLetter = $ProfilePath.Substring(0,2)
 $WorkingDirectory = "\\$Global:HostName\$ProfileShare"
 
 # Calculate free space before beginning
-GetFreeSpace Start
+'--------------------------------------------------'
+Get-FreeSpace Start
+'--------------------------------------------------'
 
 # Cleanup temp files and IE cache
 do
@@ -690,7 +700,7 @@ do
                 # Run DelProf2
                 "`n"
                 '--------------------------------------------------'
-                RunDelProf2 Unattended
+                Run-DelProf2 Unattended
                 '--------------------------------------------------'
 
                 $TotalTime1 = Get-Date
@@ -709,13 +719,18 @@ do
             }
         2
             {
-                RunDelProf2 Unattended
-                GetFreeSpace Unattended DelProf2
+                Run-DelProf2 Unattended
+                '*******************************************************'
+                Get-FreeSpace Unattended DelProf2
+                '*******************************************************'
             }
         3
             {
-                RunDelProf2 Prompt
-                GetFreeSpace Interactive DelProf2
+                
+                Run-DelProf2 Prompt
+                '*******************************************************'
+                Get-FreeSpace Interactive DelProf2
+                '*******************************************************'
             }
         4
             {
@@ -803,7 +818,9 @@ do
             {
                 "`n"
                 "Quit. No further changes will be made to $Global:HostName"
-                GetFreeSpace Finish
+                '*******************************************************'
+                Get-FreeSpace Finish
+                '*******************************************************'
                 Exit
             }
         Default
@@ -814,7 +831,7 @@ do
 }
 until ($Cleanup -eq "D" -or $Cleanup -eq "Q")
 
-GetFreeSpace Finish
+Get-FreeSpace Finish
 
 # Clean all variables created this session to prevent issues after loop
 $SysVars = Get-Variable | Select-Object -ExpandProperty Name
