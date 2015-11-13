@@ -327,6 +327,7 @@ Do
 # Get current date for logs
 $LogDate = Get-Date -Format 'yyyy-MM-dd'
 $OpenLogDate = [datetime]$LogDate
+$FormattedLogDate = $OpenLogDate.ToString('yyyy-MM-dd')
 
 Clear-Host
 '                  ▄███████▄    ▄████████ ███▄▄▄▄   ███▄▄▄▄   ▄██   ▄     ▄▄▄▄███▄▄▄▄      ▄████████  ▄████████
