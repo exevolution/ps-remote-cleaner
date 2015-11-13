@@ -201,29 +201,32 @@ Function Remove-WithProgress
         # How many empty folders for progress bars
         $EmptyCount = $EmptyFolders.Count
 
-        "Removing $EmptyCount empty folders"
-        $Title = 'Removing Empty Directories'
-
-        ForEach ($EmptyFolder in $EmptyFolders)
+        If ($EmptyCount -gt 0)
         {
-            # Increment Folder Counter
-            $CurrentFolderCount++
+            "Removing $EmptyCount empty folders"
+            $Title = 'Removing Empty Directories'
 
-            # Full Folder Name
-            $FullFolderName = $EmptyFolder.FullName
-
-            $Percentage = [math]::Round(($CurrentFolderCount / $EmptyCount) * 100)
-        
-            If ((($EmptyFolder.GetFiles()).Count + ($EmptyFolder.GetDirectories()).Count) -ne 0)
+            ForEach ($EmptyFolder in $EmptyFolders)
             {
-                Write-Verbose "$FullFolderName not empty, skipping..."
-                Continue
+                # Increment Folder Counter
+                $CurrentFolderCount++
+
+                # Full Folder Name
+                $FullFolderName = $EmptyFolder.FullName
+
+                $Percentage = [math]::Round(($CurrentFolderCount / $EmptyCount) * 100)
+        
+                If ((($EmptyFolder.GetFiles()).Count + ($EmptyFolder.GetDirectories()).Count) -ne 0)
+                {
+                    Write-Verbose "$FullFolderName not empty, skipping..."
+                    Continue
+                }
+                Write-Progress -Id 1 -Activity "Removing $Title" -CurrentOperation "Removing Empty Directory: $FullFolderName" -PercentComplete "$Percentage" -Status "Progress: $CurrentFolderCount of $EmptyCount, $Percentage%"
+                Write-Verbose "Removing folder $FullFolderName"
+                $EmptyFolder | Remove-Item -Force -ErrorAction SilentlyContinue
             }
-            Write-Progress -Id 1 -Activity "Removing $Title" -CurrentOperation "Removing Empty Directory: $FullFolderName" -PercentComplete "$Percentage" -Status "Progress: $CurrentFolderCount of $EmptyCount, $Percentage%"
-            Write-Verbose "Removing folder $FullFolderName"
-            $EmptyFolder | Remove-Item -Force -ErrorAction SilentlyContinue
+            Write-Progress -Id 1 -Completed -Activity 'Done'
         }
-        Write-Progress -Id 1 -Completed -Activity 'Done'
     }
 
     End
@@ -378,11 +381,12 @@ $VerifyInfo = Read-Host 'Is this correct? (Y/N)'
 until ($VerifyInfo -eq 'Y')
 
 # Collect info from computer, get active user
-"`n"
+''
 '-------------------------------------------------------'
 "Collecting information from $Global:HostName, please wait..."
 '-------------------------------------------------------'
-"`n"
+''
+
 If (Test-Path  "\\$Global:HostName\Admin`$\*")
 {
     "Admin rights confirmed on $Global:HostName"
@@ -562,13 +566,15 @@ $Path0 = "\\$Global:HostName\$ProfileShare"
 
 # Calculate free space before beginning
 "Checking Free Space on $Global:HostName, drive $DriveLetter`n"
-'--------------------------------------------------'
+
+'-------------------------------------------------------'
 Get-FreeSpace Start
-'--------------------------------------------------'
+'-------------------------------------------------------'
 
 # Cleanup temp files and IE cache
 do
 {
+    ''
     "Domain: " + $ComputerSys.Domain
     "Host: $Global:HostName"
     "Username: $ShortUser"
@@ -579,7 +585,8 @@ do
     '-------------------------------------------------------'
     '[1] Automated Cleanup'
     "[2] Stale Profile Cleanup ($DelProfPreference)"
-    '[3] Attempt Printer Fix (Not Working)'
+    "[3] Logoff $ShortUser"
+    '[4] Attempt Printer Fix (Not Working)'
     "[L] Open Logs"
     '[O] Options Menu'
     '[D] Do Nothing, Move To Next Computer'
@@ -684,7 +691,7 @@ do
             }
 
             # DELPROF2
-            "`n"
+            ''
             '--------------------------------------------------'
             Run-DelProf2 Unattended
             '--------------------------------------------------'
@@ -712,6 +719,14 @@ do
             '*******************************************************'
         }
         3
+        {
+            # Log user off machine
+            $ShortUser
+            $UserSession = ((quser /server:$Global:HostName | Where-Object { $_ -match $ShortUser }) -Split ' +')[2]
+            logoff $UserSession /server:$Global:HostName 
+
+        }
+        4
         {
             # Log user off machine
             $ShortUser
@@ -889,6 +904,7 @@ do
         {
             Do
             {
+                ''
                 'Options Menu'
                 '-------------------------------------------------------'
                 "[1] Verbosity: $VerbosePreference"
