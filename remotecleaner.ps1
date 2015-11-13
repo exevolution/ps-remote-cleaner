@@ -325,9 +325,8 @@ Until ($ValidAdmin -eq $True)
 Do
 {
 # Get current date for logs
-$LogDate = Get-Date -Format 'yyyy-MM-dd'
-$OpenLogDate = [datetime]$LogDate
-$FormattedLogDate = $OpenLogDate.ToString('yyyy-MM-dd')
+$LogDate = (Get-Date).ToString('yyyy-MM-dd')
+$DateSelect = $LogDate
 
 Clear-Host
 '                  ▄███████▄    ▄████████ ███▄▄▄▄   ███▄▄▄▄   ▄██   ▄     ▄▄▄▄███▄▄▄▄      ▄████████  ▄████████
@@ -778,13 +777,14 @@ do
                 ''
                 'Daily Logs'
                 '-------------------------------------------------------'
-                "[1] Open Bottleneck Log: bottleneckreport-$FormattedLogDate.txt"
-                "[2] Open Runtime Log: runtime-$FormattedLogDate.txt"
-                "[3] Open Manual Log: manual-$FormattedLogDate.txt"
-                "[4] Open All Logs for $FormattedLogDate"
-                "[5] Back 1 Day"
-                "[6] Back 7 Days"
-                "[7] Set to Today's Date"
+                "[1] Open Bottleneck Log: bottleneckreport-$DateSelect.txt"
+                "[2] Open Runtime Log: runtime-$DateSelect.txt"
+                "[3] Open Manual Log: manual-$DateSelect.txt"
+                "[4] Open All Logs for $DateSelect"
+                "[5] Open Log Folder"
+                "[6] Back 1 Day"
+                "[7] Back 7 Days"
+                "[8] Set to Today's Date"
                 "[B] Return to Main Menu"
                 '-------------------------------------------------------'
 
@@ -793,82 +793,86 @@ do
                 {
                     1
                     {
-                        If (Test-Path "$LogPath\bottleneckreport-$FormattedLogDate.txt")
+                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
                         {
-                            notepad "$LogPath\bottleneckreport-$FormattedLogDate.txt"
+                            notepad "$LogPath\bottleneckreport-$DateSelect.txt"
                         }
                         Else
                         {
-                            "Log file $LogPath\bottleneckreport-$FormattedLogDate.txt does not exist"
+                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
                         }
                         Continue
                     }
                     2
                     {
-                        If (Test-Path "$LogPath\runtime-$FormattedLogDate.txt")
+                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
                         {
-                            notepad "$LogPath\runtime-$FormattedLogDate.txt"
+                            notepad "$LogPath\runtime-$DateSelect.txt"
                         }
                         Else
                         {
-                            "Log file $LogPath\runtime-$FormattedLogDate.txt does not exist"
+                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
                         }
                         Continue
                     }
                     3
                     {
-                        If (Test-Path "$LogPath\manual-$FormattedLogDate.txt")
+                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
                         {
-                            notepad "$LogPath\manual-$FormattedLogDate.txt"
+                            notepad "$LogPath\manual-$DateSelect.txt"
                         }
                         Else
                         {
-                            "Log file $LogPath\manual-$FormattedLogDate.txt does not exist"
+                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
                         }
                         Continue
                     }
                     4
                     {
-                        If (Test-Path "$LogPath\bottleneckreport-$FormattedLogDate.txt")
+                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
                         {
-                            notepad "$LogPath\bottleneckreport-$FormattedLogDate.txt"
+                            notepad "$LogPath\bottleneckreport-$DateSelect.txt"
                         }
                         Else
                         {
-                            "Log file $LogPath\bottleneckreport-$FormattedLogDate.txt does not exist"
+                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
                         }
-                        If (Test-Path "$LogPath\runtime-$FormattedLogDate.txt")
+                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
                         {
-                            notepad "$LogPath\runtime-$FormattedLogDate.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\runtime-$FormattedLogDate.txt does not exist"
-                        }
-                        If (Test-Path "$LogPath\manual-$FormattedLogDate.txt")
-                        {
-                            notepad "$LogPath\manual-$FormattedLogDate.txt"
+                            notepad "$LogPath\runtime-$DateSelect.txt"
                         }
                         Else
                         {
-                            "Log file $LogPath\manual-$FormattedLogDate.txt does not exist"
+                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
+                        }
+                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
+                        {
+                            notepad "$LogPath\manual-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
                         }
                         Continue
                     }
                     5
                     {
-                    $FormattedLogDate = $OpenLogDate.AddDays(-1).ToString("yyyy-MM-dd")
-                    "Log Date set to $FormattedLogDate"
+                        Invoke-Item -LiteralPath "$LogPath"
                     }
                     6
                     {
-                    $FormattedLogDate = $OpenLogDate.AddDays(-7).ToString("yyyy-MM-dd")
-                    "Log Date set to $FormattedLogDate"
+                    $DateSelect = ([datetime]$DateSelect).AddDays(-1).ToString("yyyy-MM-dd")
+                    "Log Date set to $DateSelect"
                     }
                     7
                     {
-                    $FormattedLogDate = $OpenLogDate.ToString("yyyy-MM-dd")
-                    "Log Date set to $FormattedLogDate"
+                    $DateSelect = ([datetime]$DateSelect).AddDays(-7).ToString("yyyy-MM-dd")
+                    "Log Date set to $DateSelect"
+                    }
+                    8
+                    {
+                    $DateSelect = (Get-Date).ToString('yyyy-MM-dd')
+                    "Log Date set to $DateSelect"
                     }
                     B
                     {
