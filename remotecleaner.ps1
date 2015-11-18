@@ -1,5 +1,6 @@
-#requires -Version 3.0
+﻿#requires -Version 3.0
 #requires -RunAsAdministrator
+# Version 1.4.1.0
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 # Timer Start
@@ -16,7 +17,6 @@ If (!(Get-Module ActiveDirectory))
 
 # Declare necessary, or maybe unnecessary global vars for functions
 $Global:HostName = $Null
-$Global:HostEntry = $Null
 $Global:HostIP = $Null
 $Global:HostInfo = $Null
 $Global:DelProf = $Null
@@ -65,7 +65,7 @@ Function Run-DelProf2
     $T0 = Get-Date
     'Deleting Stale User Profiles With DelProf2.'
     'Please wait... This may take several minutes.'
-    "`n"
+    ''
     $Global:DelProf = Start-Process -FilePath "$PSScriptRoot\DelProf2\DelProf2.exe" -ArgumentList "/c:$Global:HostName /ed:$ShortUser /ed:Admin* /ed:00* /ed:Default* /ed:Public* $VarAttend" -Wait -PassThru
     $Global:DelProfExit = $Global:DelProf.ExitCode
     If ($Global:DelProfExit -eq "0")
@@ -84,7 +84,8 @@ Function Run-DelProf2
     $T2 = New-TimeSpan -Start $T0 -End $T1
     "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
-    "{0} | DelProf2 completed in {1:d2}:{2:d2}:{3:d2}`n" -F $Global:HostName,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
+    "{0} | DelProf2 completed in {1:d2}:{2:d2}:{3:d2}" -F $Global:HostName,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
+    ''
     Return
 }
 
@@ -130,7 +131,7 @@ Function Remove-WithProgress
         $CurrentFileCount = 0
         $CurrentFolderCount = 0
     
-        "`n"
+        ''
         '--------------------------------------------------'
         "Enumerating $Title, please wait..."
     
@@ -148,15 +149,17 @@ Function Remove-WithProgress
         "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
         # Total file count for progress bar
-        $FileCount = $Files.Count
+        $FileCount = ($Files | Measure-Object).Count
         $TotalSize = ($Files | Measure-Object -Sum Length).Sum
         $TotalSize = [math]::Round($TotalSize / 1GB,3)
 
         # Write detailed info to runtime log
-        "`n{0} | {1} {2} enumerated in {3:d2}:{4:d2}:{5:d2}" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
+        ''
+        "{0} | {1} {2} enumerated in {3:d2}:{4:d2}:{5:d2}" -F $Global:HostName,$FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
 
-        "`n"
+        ''
         "Removing $FileCount $Title... $TotalSize`GB."
+
         # Timer Start
         $T0 = Get-Date
     
@@ -173,9 +176,9 @@ Function Remove-WithProgress
         Write-Progress -Id 0 -Completed -Activity 'Done'
 
         # Show error count
-        If ($Error.Count -gt 0)
+        If (($Error | Measure-Object).Count -gt 0)
         {
-            "{0} errors while removing files in {1}." -f $Error.Count, $Title
+            "{0} errors while removing files in {1}." -F ($Error | Measure-Object).Count, $Title
             "Check error-$Global:HostName-$LogDate.txt for details."
             $Error | Out-File -File "$LogPath\errors\error-$Global:HostName-$LogDate.txt" -Append
 
@@ -190,7 +193,8 @@ Function Remove-WithProgress
         #Timer Stop
         $T1 = Get-Date
         $T2 = New-TimeSpan -Start $T0 -End $T1
-        "{0} {1} deleted in {2:d2}:{3:d2}:{4:d2}`n" -F $FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds
+        "{0} {1} deleted in {2:d2}:{3:d2}:{4:d2}" -F $FileCount,$Title,$T2.Hours,$T2.Minutes,$T2.Seconds
+        ''
 
         # Timer Start
         $T0 = Get-Date
@@ -199,7 +203,7 @@ Function Remove-WithProgress
         $EmptyFolders = @(Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory) | Where-Object {($_.GetFiles()).Count -eq 0} | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
     
         # How many empty folders for progress bars
-        $EmptyCount = $EmptyFolders.Count
+        $EmptyCount = ($EmptyFolders | Measure-Object).Count
 
         If ($EmptyCount -gt 0)
         {
@@ -236,7 +240,8 @@ Function Remove-WithProgress
         "Operation Completed in {0:d2}:{1:d2}:{2:d2}" -F $T2.Hours,$T2.Minutes,$T2.Seconds
 
         # Write detailed info to runtime log
-        "{0} | {1} empty folders deleted in {2:d2}:{3:d2}:{4:d2}`n" -F $Global:HostName,$EmptyCount,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
+        "{0} | {1} empty folders deleted in {2:d2}:{3:d2}:{4:d2}" -F $Global:HostName,$EmptyCount,$T2.Hours,$T2.Minutes,$T2.Seconds | Out-File -File "$LogPath\runtime-$LogDate.txt" -Append
+        ''
         '--------------------------------------------------'
         Return
     }
@@ -325,7 +330,7 @@ Until ($ValidAdmin -eq $True)
 "Credentials validated, continuing"
 
 # Begin main program
-Do
+While ($True)
 {
 # Get current date for logs
 $LogDate = (Get-Date).ToString('yyyy-MM-dd')
@@ -363,22 +368,22 @@ Do
 Do
 {
     $Global:HostEntry = Read-Host -Prompt 'Enter the computer name or IP address'
+    Resolve-Host
 }
-While ($Global:HostEntry -eq '')
+Until ($Global:HostIP -as [IPAddress])
 
-Resolve-Host
 
-"`n"
+''
 '-------------------------------------------------------'
 "Computer Name: $Global:HostName"
 "IP Address: $Global:HostIP"
 "Admin Username: $LocalAdmin"
 '-------------------------------------------------------'
-"`n"
+''
 
-$VerifyInfo = Read-Host 'Is this correct? (Y/N)'
+$VerifyHost = Read-Host 'Is this correct? (Y/N)'
 }
-until ($VerifyInfo -eq 'Y')
+until ($VerifyHost -eq 'Y')
 
 # Collect info from computer, get active user
 ''
@@ -420,13 +425,6 @@ If ($Global:DomainUser -eq $Null)
     $AllProfiles = $Null
     $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")} | Sort-Object LastUseTime -Descending
 
-<#    
-    # Store all profile SIDs in an array
-    $SIDs = $Null
-    $SIDs = @($AllProfiles | Select-Object -ExpandProperty sid)
-
-    # Use the SIDs to get the usernames from AD
-#>
     ForEach ($Profile in $AllProfiles)
     {
         $AccountName = $Null
@@ -434,32 +432,22 @@ If ($Global:DomainUser -eq $Null)
         $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
         If ($AccountName -eq $Null)
         {
-            "`n$SID does not exist in Active Directory, skipping"
+            ''
+            "$SID does not exist in Active Directory, skipping"
             Continue
         }
         $UserArray += "$AccountName"
     }
-<#
-    ForEach ($SID in $SIDs)
-    {
-        $AccountName = $Null
-        $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
-        If ($AccountName -eq $Null)
-        {
-            "`n$SID does not exist in Active Directory, skipping"
-            Continue
-        }
-        $UserArray += "$AccountName"
-    }
-#>
-    If ($UserArray.Count -eq 0) {
+
+    If (($UserArray | Measure-Object).Count -eq 0) {
         "No valid user profiles on $Global:HostName. Please run again on a different computer"
         Break
     }
     # Output it, ask user to select a menu option
-    ElseIf ($UserArray.Count -eq 1)
+    ElseIf (($UserArray | Measure-Object).Count -eq 1)
     {
-        "`nOnly 1 profile was detected, selecting {0}`n" -F $UserArray[0]
+        ''
+        "Only 1 profile was detected, selecting {0}" -F $UserArray[0]
         $SelectedUser = 0
     }
     Else
@@ -471,7 +459,8 @@ If ($Global:DomainUser -eq $Null)
             $SelectedUser = $Null
 
             # Display menu
-            "`nProfile Listing (Most recently accessed on top)"
+            ''
+            "Profile Listing (Most recently accessed on top)"
             # Sort the hash table and output it
             
             $Number = 0
@@ -481,19 +470,23 @@ If ($Global:DomainUser -eq $Null)
                 Write-Host "$Number`. $User"
             }
 
-            # Ask user for numeric input, 
-            $SelectedUser = Read-Host "`nPlease select the assigned user"
+            # Ask user for numeric input
+            ''
+            $SelectedUser = Read-Host "Please select the assigned user"
             $SelectedUser = $SelectedUser -as [int32]
             If ($SelectedUser -eq $Null -or $SelectedUser -eq "")
             {
-                "`nYou must enter a numeric value"
+                ''
+                "You must enter a numeric value"
                 Continue
             }
             # Subtract 1 from input for 0 indexed array
             $SelectedUser = $SelectedUser - 1
-            If ($SelectedUser -gt ($UserArray.Count - 1))
+            If ($SelectedUser -gt (($UserArray | Measure-Object).Count - 1))
             {
-                "`nYou have entered a value out of range, please choose a correct value`n"
+                ''
+                "You have entered a value out of range, please choose a correct value"
+                ''
                 Continue
             }
             $ok = $True
@@ -502,7 +495,8 @@ If ($Global:DomainUser -eq $Null)
 
     }
     $ShortUser = $UserArray[$SelectedUser]
-    "Selected: $ShortUser`n"
+    "Selected: $ShortUser"
+    ''
 
     # Assume, based on entered information, the active profile
     $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
@@ -530,24 +524,17 @@ If (($Corrupt -band $ProfileStatus) -eq $Corrupt)
 $AdminLogPath = ($LocalAdmin).Replace("$Global:Domain", '')
 
 # Check for per-user log directory, create if it does not exist
-If (Test-Path "$PSScriptRoot\logs\$AdminLogPath")
-{
-    'Log path exists, continuing...'
-}
-Else
+If (! (Test-Path "$PSScriptRoot\logs\$AdminLogPath"))
 {
     "Created log directory"
     New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath"
 }
-If (Test-Path "$PSScriptRoot\logs\$AdminLogPath\errors")
-{
-    'Log path exists, continuing...'
-}
-Else
+If (! (Test-Path "$PSScriptRoot\logs\$AdminLogPath\errors"))
 {
     "Created log directory"
     New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath\errors"
 }
+
 $LogPath = "$PSScriptRoot\logs\$AdminLogPath"
 $ErrorLogPath = "$PSScriptRoot\logs\$AdminLogPath\errors"
 
@@ -565,36 +552,37 @@ $DriveLetter = $ProfilePath.Substring(0,2)
 $Path0 = "\\$Global:HostName\$ProfileShare"
 
 # Calculate free space before beginning
-"Checking Free Space on $Global:HostName, drive $DriveLetter`n"
-
+''
+"Checking Free Space on $Global:HostName, drive $DriveLetter"
+''
 '-------------------------------------------------------'
 Get-FreeSpace Start
 '-------------------------------------------------------'
 
 # Cleanup temp files and IE cache
-do
+Do
 {
     ''
-    "Domain: " + $ComputerSys.Domain
-    "Host: $Global:HostName"
-    "Username: $ShortUser"
-    "UNC Path: \\$Global:HostName\$ProfileShare"
-    "Log Path: $LogPath\"
+    "Domain: {0}" -F $ComputerSys.Domain
+    "Host: {0}" -F $Global:HostName
+    "Username: {0}" -F $ShortUser
+    "UNC Path: \\{0}\{1}" -F $Global:HostName,$ProfileShare
+    "Log Path: {0}\" -F $LogPath
     ''
     'Choose one of the following options to continue'
     '-------------------------------------------------------'
     '[1] Automated Cleanup'
     "[2] Stale Profile Cleanup ($DelProfPreference)"
     "[3] Logoff $ShortUser"
-    '[4] Attempt Printer Fix (Not Working)'
+    '[P] Attempt Printer Fix (Not Working)'
     "[L] Open Logs"
     '[O] Options Menu'
     '[D] Do Nothing, Move To Next Computer'
     '[Q] Quit'
     '-------------------------------------------------------'
-    $Cleanup = Read-Host 'Choice'
+    $MenuOption = Read-Host 'Choice'
 
-    Switch ($Cleanup)
+    Switch ($MenuOption)
     {
         1
         {
@@ -612,28 +600,28 @@ do
                 Remove-WithProgress -Path "$Path" -Title 'Windows Temp Files'
             }
 
-            # IE CACHE
+            # IE CACHE W7
             $Path = "$Path0\AppData\Local\Microsoft\Windows\Temporary Internet Files"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 7)'
             }
 
-            # IE COOKIES
+            # IE COOKIES W7
             $Path = "$Path0\AppData\Roaming\Microsoft\Windows\Cookies"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cookies (Windows 7)'
             }
 
-            # IE CACHE
+            # IE CACHE W8.1
             $Path = "$Path0\AppData\Local\Microsoft\Windows\INetCache"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 8.1)'
             }
 
-            # IE COOKIES
+            # IE COOKIES w8.1
             $Path = "$Path0\AppData\Local\Microsoft\Windows\INetCookies"
             If (Test-Path "$Path")
             {
@@ -698,7 +686,7 @@ do
 
             $TotalTime1 = Get-Date
             $TotalTime2 = New-TimeSpan -Start $TotalTime0 -End $TotalTime1
-            "`n"
+            ''
             "Automated Cleanup Completed in {0:d2}:{1:d2}:{2:d2}" -F $TotalTime2.Hours,$TotalTime2.Minutes,$TotalTime2.Seconds
 
             $ManualCleanup = $Null
@@ -707,8 +695,8 @@ do
             {
             "Additional Cleanup needed on $Global:HostName - User ID: $ShortUser | Less than 1GB free after automated cleanup" | Tee-Object -File "$LogPath\manual-$LogDate.txt" -Append
             }
-
-            $Cleanup = 'D'
+            Get-FreeSpace Finish
+            Continue
         }
         2
         {
@@ -717,22 +705,59 @@ do
             '*******************************************************'
             Get-FreeSpace $DelProfPreference DelProf2
             '*******************************************************'
+            Continue
         }
         3
         {
-            # Log user off machine
-            $ShortUser
-            $UserSession = ((quser /server:$Global:HostName | Where-Object { $_ -match $ShortUser }) -Split ' +')[2]
-            logoff $UserSession /server:$Global:HostName 
+            $Confirm = $Null
+            $Confirm = Read-Host "Are you sure you want to force $ShortUser to log off $Global:HostName? (Y/N)"
 
+            If ($Confirm -eq "Y")
+            {
+                # Log user off machine
+                $ShortUser
+                reg delete "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC
+                & reg add "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 1
+                $UserSession = ((quser /server:$Global:HostName | Where-Object { $_ -match $ShortUser }) -Split ' +')[2]
+                logoff $UserSession /server:$Global:HostName
+                & reg add "\\$Global:HostName\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 0
+            }
+            Continue
         }
-        4
+        P
         {
+            $Code = Read-Host "Do not use unless you know what you are doing. Enter usage code to continue"
+            If ($Code -ne 'eckse4alwayswins')
+            {
+                Continue
+            }
+
             # Log user off machine
-            $ShortUser
-            $UserSession = ((quser /server:$Global:HostName | Where-Object { $_ -match $ShortUser }) -Split ' +')[2]
-            logoff $UserSession /server:$Global:HostName 
-                
+            Set-Location "\\pnmac.com\fileserver\Departments\IT\IT Infrastructure\Help Desk\Bottleneck\PSTools"
+            $UserSession = (.\PsLoggedOn.exe \\es-srv-0315).Split('\')[1]
+            #logoff $UserSession /server:$Global:HostName 
+            
+            # Hook remote print spooler
+#            $RemoteSpooler = Get-Service -ComputerName $Global:HostName -Name Spooler
+
+            # Stop Spooler
+#            $RemoteSpooler.Stop()
+
+            $Server = "\\es-srv-0315"
+            $EULA = "/accepteula"
+            $Args = ""
+            $Process = "powershell.exe"
+            $Command = "{Get-WMIObject Win32_Printer | where{$_.Network -eq 'true'} | ForEach{$_.Delete()}}"
+            $CommandArgs = "-Command $Command"
+            & .\PsExec.exe "\\es-srv-0315", "/accepteula", "powershell.exe", "-Command", "{Get-WMIObject Win32_Printer | where{$_.Network -eq 'true'} | ForEach{$_.Delete()}}"
+            & .\PsLoggedon.exe /?
+
+            # Delete Registry Keys
+            & reg delete "\\$Global:HostName\HKLM\Software\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider" /F
+            & reg add "\\$Global:HostName\HKLM\Software\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider" /F
+            & reg add "\\$Global:HostName\HKLM\Software\Microsoft\Windows NT\CurrentVersion\Print\Providers\Client Side Rendering Print Provider\Servers" /F
+
+            <#
             # Hook WinRM service on remote machine to allow PSSession
             $RemoteWinRM = Get-Service -Name WinRM
 
@@ -741,6 +766,7 @@ do
             {
                 $RemoteWinRM.Start()
             }
+
             # Create a remote PSSession for printer work
             $RemoteSession = New-PSSession -ComputerName $Global:HostName -Credential $AdminCreds
             Invoke-Command -Session $RemoteSession -ScriptBlock `
@@ -774,16 +800,14 @@ do
 
             }
             Remove-PSSession $RemoteSession
-
-            # Hook remote print spooler
-            $RemoteSpooler = Get-Service -ComputerName $Global:HostName -Name Spooler
+            #>
 
             # Restart Print Spooler
-            $RemoteSpooler.Stop()
             $RemoteSpooler.Start()
 
             # Stop RemoteWinRM service
             $RemoteWinRM.Stop()
+            Continue
         }
         L
         {
@@ -894,11 +918,14 @@ do
                         "Returning to main menu"
                         Break
                     }
-                        
+                    Default
+                    {
+                        "Unrecognized input"
+                        $MenuOption = $Null
+                    }
                 }
-            
             }
-            Until ($MenuOption -eq "B")
+            While ($MenuOption -ne "B")
         }
         O
         {
@@ -947,27 +974,30 @@ do
                     B
                     {
                         "Returning to main menu"
-                        Break
                     }
-                        
+                    Default
+                    {
+                        "Unrecognized input"
+                        $MenuOption = $Null
+                    }
                 }
-            
             }
-            Until ($MenuOption -eq "B")
+            While ($MenuOption -ne "B")
         }
     D
         {
-            "`n"
             "No further changes will be made to $Global:HostName"
-            Break
+            Sleep 1
         }
+
     Q
         {
-            "`n"
-            "Quit. No further changes will be made to $Global:HostName"
+            ''
+            "Quitting. No further changes will be made to $Global:HostName"
             '*******************************************************'
             Get-FreeSpace Finish
             '*******************************************************'
+            Sleep 1
             Exit
         }
     Default
@@ -976,22 +1006,13 @@ do
         }
     }
 }
-until ($Cleanup -eq "D" -or $Cleanup -eq "Q")
-
-Get-FreeSpace Finish
+Until ($MenuOption -eq 'D')
 
 # Clean all variables created this session to prevent issues after loop
 $SysVars = Get-Variable | Select-Object -ExpandProperty Name
 $SysVars += 'sysvars'
 Get-Variable | Where-Object {$SysVars -notcontains $_.Name} | ForEach {Remove-Variable $_}
-
-'-------------------------------------------------------'
-'[R] Run again on another computer'
-'[Q] Quit'
-'-------------------------------------------------------'
-$Rerun = Read-Host 'Choice'
 }
-until ($Rerun -eq 'Q')
 
 # Elapsed Time, log to file
 $Runtime1 = Get-Date
