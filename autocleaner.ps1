@@ -67,7 +67,7 @@ Function Remove-WithProgress
 
     Begin
     {
-        
+        $Path = Join-Path -Path "\\$ComputerName" -ChildPath "$Path"
     }
 
     Process
@@ -176,19 +176,26 @@ Do
 {
     If (Test-Path "$PSScriptRoot\autologs\resume.csv")
     {
+        If ($Resume)
+        {
+            Remove-Variable Resume
+        }
         $Resume = Read-Host -Prompt "Resume previous operation(Y/N)?"
         Switch ($Resume)
         {
             Y
                 {
-                    $VMs = Import-CSV "$PSScriptRoot\autologs\resume.csv" -Header "$CSVHeader"
                     "Importing resume.csv"
+                    $VMs = Import-CSV "$PSScriptRoot\autologs\resume.csv" -Header "$CSVHeader"
+                    "Complete"
+                    Remove-Item -LiteralPath "$PSScriptRoot\autologs\resume.csv" -Force
                     Break
                 }
             N
                 {
-                    $VMs = Import-CSV $RecentReport.FullName | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
                     "Importing {0}" -F $RecentReport.FullName
+                    $VMs = Import-CSV $RecentReport.FullName | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
+                    "Complete"
                     Break
                 }
             Default
@@ -200,8 +207,9 @@ Do
     }
     Else
     {
-        $VMs = Import-CSV $RecentReport.FullName -Header "$CSVHeader" | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
         "Importing {0}" -F $RecentReport.FullName
+        $VMs = Import-CSV $RecentReport.FullName -Header "$CSVHeader" | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
+        "Complete"
     }
 }
 Until ($Resume)
@@ -227,7 +235,7 @@ ForEach ($VM in $VMs)
 
     $Profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" -Filter "NOT Special='True' AND NOT LocalPath LIKE '%00' AND NOT LocalPath LIKE '%Administrator'"
 
-    If ($UserName -eq $Null)
+    If (!$UserName)
     {
         If (($Profiles | Measure-Object).Count -eq 1)
         {
@@ -260,14 +268,15 @@ ForEach ($VM in $VMs)
         $Path0 = $ProfilePath -replace ':', '$'
     }
 
-    $StaleProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" -Filter "NOT Special='True' AND NOT LocalPath LIKE '%00' AND NOT LocalPath LIKE '%Administrator' AND NOT LocalPath LIKE '%$UserName' AND NOT RoamingPath LIKE '%$UserName.V2'"
+<#    $StaleProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" -Filter "NOT Special='True' AND NOT LocalPath LIKE '%00' AND NOT LocalPath LIKE '%Administrator' AND NOT LocalPath LIKE '%$UserName' AND NOT RoamingPath LIKE '%$UserName.V2'"
     ForEach ($Prof in $StaleProfiles)
     {
-        "Deleting stale profile"
+        "Deleting stale profile $ProfPath"
         $ProfPath = $Prof.LocalPath -replace ':','$'
-        Remove-WithProgress -ComputerName $VMServer -Path $Path -Title "Stale Profile $ProfPath"
+        Remove-WithProgress -ComputerName $VMServer -Path $ProfPath -Title "Stale Profile $ProfPath"
         $Prof.Delete()
     }
+#>
 
     # If profile status Bit Field includes 8 (corrupt profile), quit.
     $Corrupt = 8
@@ -282,86 +291,102 @@ ForEach ($VM in $VMs)
     Get-FreeSpace -ComputerName $VMServer -DriveLetter $DriveLetter | Tee-Object -FilePath "$PSScriptRoot\autologs\bottleneck-$LogDate.log" -Append
     "Performing cleanup on $VMServer..."
 
+    $AppDataPath = Join-Path -Path "$Path0" -ChildPath "AppData"
+    $AppDataLocal = Join-Path -Path "$AppDataPath" -ChildPath "Local"
+    $AppDataRoaming = Join-Path -Path "$AppDataPath" -ChildPath "Roaming"
+
     # WINDOWS TEMP
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Temp"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Temp"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Windows Temp Files'
     }
 
     # IE CACHE W7
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Temporary Internet Files"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Temporary Internet Files"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 7)'
     }
 
     # IE COOKIES W7
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Cookies"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Cookies"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Internet Exploder Cookies (Windows 7)'
     }
 
     # IE CACHE W8.1
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCache"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCache"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 8.1)'
     }
 
     # IE COOKIES w8.1
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCookies"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCookies"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Internet Exploder Cookies (Windows 8.1)'
     }
 
     # CHROME CACHE
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Cache"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Cache"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Google Chrome Cache Files'
     }
 
     # CHROME MEDIA CACHE
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Media Cache"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Media Cache"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Google Chrome Media Cache Files'
     }
 
     # GOOGLE CHROME UPDATES
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "Update"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataLocal" -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "Update"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Google Chrome Update Files'
     }
 
     # FIVE9 LOGS
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Roaming" | Join-Path -ChildPath "Five9" | Join-Path -ChildPath "Logs"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataRoaming" -ChildPath "Five9" | Join-Path -ChildPath "Logs"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Five9 Log Files'
     }
                 
     # FIVE9 INSTALLS
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "$Path0" | Join-Path -ChildPath "AppData" | Join-Path -ChildPath "Roaming" | Join-Path -ChildPath "Five9.*"
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "$AppDataRoaming" -ChildPath "Five9.*"
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Old Five9 Installations'
     }
 
     # C: DRIVE RECYCLE BIN
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "c$" | Join-Path -ChildPath '$Recycle.Bin'
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "c$" -ChildPath '$Recycle.Bin'
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Recycle Bin Files on drive C:'
     }
 
     # D: DRIVE RECYCLE BIN
-    $Path = Join-Path -Path "\\$VMServer" -ChildPath "d$" | Join-Path -ChildPath '$Recycle.Bin'
-    If (Test-Path "$Path")
+    $Path = Join-Path -Path "d$" -ChildPath '$Recycle.Bin'
+    $TestPath = Join-Path -Path "\\$VMServer" -ChildPath "$Path"
+    If (Test-Path "$TestPath")
     {
         # Call deletion with progress bar
         Remove-WithProgress -ComputerName $VMServer -Path "$Path" -Title 'Recycle Bin Files on drive D:'
