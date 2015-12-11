@@ -1,5 +1,8 @@
 # Autocleaner.ps1
 # Contact https://www.reddit.com/user/ExEvolution/ if you have any issues
+# Start runtime
+Clear-Host
+$Runtime0 = Get-Date
 
 # Configuration options
 $ReportPrefix = "report" # Report filename prefix. Example report-2015-12-08.csv would be "report". Search finds the most recently modified report*.csv
@@ -10,6 +13,40 @@ $VMRegex2 = "(VDD)-(\w{1,11})" # Same as above, Comment out if not needed. Gives
 $VerbosePreference = "Continue" # Toggle Verbosity, "SilentlyContinue" to suppress VERBOSE messages, "Continue" to use full Verbosity
 
 # FUNCTIONS START
+
+Function Get-FreeSpace
+{
+    [CmdletBinding(SupportsShouldProcess=$True, ConfirmImpact="Medium")]
+
+    Param(
+        [Parameter(Mandatory=$True, Position=0)]
+        [ValidateNotNullOrEmpty()]
+        [String]$ComputerName,
+
+        [Parameter(Mandatory=$True, Position=1)]
+        [ValidateNotNullOrEmpty()]
+        [String]$DriveLetter
+)
+    Begin
+    {
+
+    }
+    Process
+    {
+        $FreeSpace = Get-WmiObject Win32_LogicalDisk -ComputerName $ComputerName |
+        Where-Object { $_.DeviceID -eq "$DriveLetter" } |
+        Select-Object @{Name="Computer Name"; Expression={ $_.SystemName } }, @{Name="Drive"; Expression={ $_.Caption } }, @{Name="Free Space (GB)"; Expression={ "$([math]::Round($_.FreeSpace / 1GB,2))GB" } } |
+        Format-Table -AutoSize
+    }
+    End
+    {
+        '**************************************************'
+        $FreeSpace
+        '**************************************************'
+        Return
+    }
+}
+
 Function Remove-WithProgress
 {
     [CmdletBinding(SupportsShouldProcess=$True, ConfirmImpact="Medium")]
@@ -86,7 +123,7 @@ Function Remove-WithProgress
         If ($EmptyCount -gt 0)
         {
             "Removing $EmptyCount empty folders"
-            $Title = 'Removing Empty Directories'
+            $Title = 'Empty Directories'
 
             ForEach ($EmptyFolder in $EmptyFolders)
             {
@@ -131,18 +168,46 @@ If (!(Test-Path -LiteralPath "$PSScriptRoot\autologs\"))
     New-Item -ItemType Directory "$PSScriptRoot\autologs\"
 }
 
-# Remove previous list of skipped VMs
-If (Test-Path -LiteralPath "$PSScriptRoot\autologs\list.csv")
-{
-    Remove-Item -LiteralPath "$PSScriptRoot\autologs\list.csv" -Force
-}
-
 # Import most recent report csv from local Downloads folder
 $DownloadPath = Join-Path -Path $env:HOMEDRIVE -ChildPath $env:HOMEPATH | Join-Path -ChildPath "Downloads"
 $RecentReport = Get-ChildItem -LiteralPath $DownloadPath -Filter "$ReportPrefix*$ReportSuffix.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-"Importing {0}" -F $RecentReport.FullName
 
-$VMs = Import-CSV $RecentReport.FullName -Header "$CSVHeader" | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
+Do
+{
+    If (Test-Path "$PSScriptRoot\autologs\resume.csv")
+    {
+        $Resume = Read-Host -Prompt "Resume previous operation(Y/N)?"
+        Switch ($Resume)
+        {
+            Y
+                {
+                    $VMs = Import-CSV "$PSScriptRoot\autologs\resume.csv" -Header "$CSVHeader"
+                    "Importing resume.csv"
+                    Break
+                }
+            N
+                {
+                    $VMs = Import-CSV $RecentReport.FullName | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
+                    "Importing {0}" -F $RecentReport.FullName
+                    Break
+                }
+            Default
+                {
+                    "Unrecognized Option"
+                    Remove-Variable Resume
+                }
+        }
+    }
+    Else
+    {
+        $VMs = Import-CSV $RecentReport.FullName -Header "$CSVHeader" | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
+        "Importing {0}" -F $RecentReport.FullName
+    }
+}
+Until ($Resume)
+
+# Copy the array for manipulation
+$VMRemaining = {$VMs}.Invoke()
 
 ForEach ($VM in $VMs)
 {
@@ -150,12 +215,17 @@ ForEach ($VM in $VMs)
     {
         Remove-Variable UserName
     }
-
+    $LogDate = (Get-Date).ToString('yyyy-MM-dd')
     $VMName = Get-WmiObject Win32_ComputerSystem -ComputerName $VM."$CSVHeader"
     $VMServer = $VMName.__SERVER
-    $UserName = $VMName.UserName.Split("\")[1]
+    $UserName = $VMName.UserName
 
-    $Profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")}
+    If ($UserName)
+    {
+        $UserName = $VMName.UserName.Split("\")[1]
+    }
+
+    $Profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" -Filter "NOT Special='True' AND NOT LocalPath LIKE '%00' AND NOT LocalPath LIKE '%Administrator'"
 
     If ($UserName -eq $Null)
     {
@@ -164,28 +234,39 @@ ForEach ($VM in $VMs)
             $SID = $Profiles | Select-Object -ExpandProperty sid
             $UserName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
             $DriveLetter = $Profiles.LocalPath.Substring(0,2)
+            $DriveLetterUNC = $DriveLetter -replace ':', '$'
             $ProfilePath = $Profiles.LocalPath -replace ':','$'
             $Path0 = $ProfilePath | Where-Object {$_.LocalPath -match $UserName}
             "Active User: {0}\{1} - {2}" -F $VMServer, $Path0, $UserName
         }
         If (($Profiles | Measure-Object).Count -gt 1)
         {
-            "Unable to detect assigned user on {0}, logging to list.csv and skipping" -F $VMServer
-            $VMName | Export-Csv -Path "$PSScriptRoot\autologs\list.csv" -Append
+            "Unable to detect assigned user on {0}, logging to skipped-{1}.csv moving to next object." -F $VMServer, $LogDate
+            $VMName | Export-Csv -Path "$PSScriptRoot\autologs\skipped-$LogDate.csv" -Append
             Continue
         }
         Else
         {
             "No profiles, skipping"
-            $VMName | Export-Csv -Path "$PSScriptRoot\autologs\list.csv" -Append
+            $VMName | Export-Csv -Path "$PSScriptRoot\autologs\skipped-$LogDate.csv" -Append
             Continue
         }
     }
     Else
     {
         $ProfilePath = $Profiles.LocalPath | Where-Object {$_ -match $UserName}
-        $DriveLetter = $ProfilePath.Substring(0,2) -replace ':','$'
+        $DriveLetter = $ProfilePath.Substring(0,2)
+        $DriveLetterUNC = $DriveLetter -replace ':','$'
         $Path0 = $ProfilePath -replace ':', '$'
+    }
+
+    $StaleProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $VM."$CSVHeader" -Filter "NOT Special='True' AND NOT LocalPath LIKE '%00' AND NOT LocalPath LIKE '%Administrator' AND NOT LocalPath LIKE '%$UserName' AND NOT RoamingPath LIKE '%$UserName.V2'"
+    ForEach ($Prof in $StaleProfiles)
+    {
+        "Deleting stale profile"
+        $ProfPath = $Prof.LocalPath -replace ':','$'
+        Remove-WithProgress -ComputerName $VMServer -Path $Path -Title "Stale Profile $ProfPath"
+        $Prof.Delete()
     }
 
     # If profile status Bit Field includes 8 (corrupt profile), quit.
@@ -195,10 +276,10 @@ ForEach ($VM in $VMs)
     If (($Corrupt -band $ProfileStatus) -eq $Corrupt)
     {
         Write-Warning "PROFILE CORRUPT! User profile rebuild necessary. Writing to corrupt.csv and skipping!"
-        $VMName | Export-Csv -Path "$PSScriptRoot\autologs\corrupt.csv" -Append
+        $VMName | Export-Csv -Path "$PSScriptRoot\autologs\corrupt.csv" -Append -NoTypeInformation
         Continue
     }
-
+    Get-FreeSpace -ComputerName $VMServer -DriveLetter $DriveLetter | Tee-Object -FilePath "$PSScriptRoot\autologs\bottleneck-$LogDate.log" -Append
     "Performing cleanup on $VMServer..."
 
     # WINDOWS TEMP
@@ -291,7 +372,7 @@ ForEach ($VM in $VMs)
     {
         Remove-Variable DelProf
     }
-    $DelProf = Start-Process -FilePath "$PSScriptRoot\Bin\DelProf2 1.6.0\DelProf2.exe" -ArgumentList "/c:$VMServer /ed:$UserName /ed:Admin* /ed:00* /ed:Default* /ed:Public* /u" -Wait -PassThru
+    $DelProf = Start-Process -FilePath "$PSScriptRoot\Bin\DelProf2 1.6.0\DelProf2.exe" -ArgumentList "/c:$VMServer /ed:$UserName /ed:Admin* /ed:00* /ed:Default* /ed:Public* /u /ntuserini" -Wait -PassThru
     $DelProf.WaitForExit()
 
     If ($DelProf.ExitCode -eq "0")
@@ -306,5 +387,19 @@ ForEach ($VM in $VMs)
     {
         "DelProf2 encountered an error. Exit code {0}" -F $DelProf.ExitCode
     }
+
+    Get-FreeSpace -ComputerName $VMServer -DriveLetter $DriveLetter | Tee-Object -FilePath "$PSScriptRoot\autologs\bottleneck-$LogDate.log" -Append
+
     "Cleanup completed on $VMServer, moving to next system"
+
+    $VMRemaining.Remove($VM)
+    $VMRemaining | Export-Csv -LiteralPath "$PSScriptRoot\autologs\resume.csv" -NoTypeInformation
+
+    Start-Sleep -Seconds 5
+    Clear-Host
 }
+Remove-Item -LiteralPath "$PSScriptRoot\autologs\resume.csv" -Force
+
+$Runtime1 = Get-Date
+$Runtime2 = New-TimeSpan -Start $Runtime0 -End $Runtime1
+"Total Runtime: {0:d2}:{1:d2}:{2:d2}" -F $Runtime2.Hours,$Runtime2.Minutes,$Runtime2.Seconds | Tee-Object -FilePath "$PSScriptRoot\autologs\runtime-$LogDate.log" -Append
