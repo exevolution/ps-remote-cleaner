@@ -70,20 +70,18 @@ Do
         $Resume = Read-Host -Prompt "Resume previous operation(Y/N)?"
         Switch ($Resume)
         {
-            Y
+            "Y"
                 {
                     "Importing resume.csv"
                     $VMs = Import-CSV "$ScriptRoot\autologs\resume.csv" -Header "$CSVHeader"
                     "Complete"
                     Remove-Item -LiteralPath "$ScriptRoot\autologs\resume.csv" -Force
-                    Break
                 }
-            N
+            "N"
                 {
                     "Importing {0}" -F $RecentReport.FullName
                     $VMs = Import-CSV $RecentReport.FullName | Where-Object {$_."$CSVHeader" -match "$VMRegex1" -or $_."$CSVHeader" -match "$VMRegex2"}
                     "Complete"
-                    Break
                 }
             Default
                 {
@@ -106,6 +104,12 @@ Until ($Resume)
 $VMRemaining = {$VMs}.Invoke()
 $VMs = $VMs.$CSVHeader
 
+# Progress Bar stuff
+$TotalVMs = ($VMs | Measure-Object).Count
+"Machines Imported: $TotalVMs"
+$Counter = 0
+
+
 # Set max concurrent threads if not configured
 If (($MaxThreads -eq "") -or !($MaxThreads -as [int32]))
 {
@@ -114,8 +118,13 @@ If (($MaxThreads -eq "") -or !($MaxThreads -as [int32]))
     "Autoconfigured Max Threads: $MaxThreads"
 }
 
+Write-Progress -Activity "Cleaning VMs" -CurrentOperation "Beginning..." -Id 0 -PercentComplete -1 -Status "Processing..."
 ForEach ($VM in $VMs)
 {
+    $Counter++
+    $Percentage = [math]::Round(($Counter / $TotalVMs) * 100)
+    Write-Progress -Activity "Cleaning VMs" -CurrentOperation "VM Name: $VM" -Id 0 -PercentComplete $Percentage -Status "Background cleanup job started"
+
     While (@(Get-Job | Where-Object { $_.State -eq "Running" }).Count -ge $MaxThreads)
     {
         Write-Verbose "Waiting for available thread... ($MaxThreads Maximum)"
@@ -366,7 +375,7 @@ ForEach ($VM in $VMs)
 While (@(Get-Job | Where-Object {$_.State -eq "Running" }).Count -ne 0)
 {
     Write-Host "Waiting for background jobs..."
-    Get-Job | Receive-Job
+    Get-Job
     Start-Sleep -Seconds 5
 }
 
@@ -376,8 +385,9 @@ $Data = ForEach ($Job in (Get-Job))
     Receive-Job $Job
     Remove-Job $Job
 }
+Write-Progress -Id 0 "Done" "Done"
 
-$Data | Tee-Object -FilePath "$ScriptRoot\autologs\jobdata-$LogDate.log"
+$Data | Out-File -FilePath "$ScriptRoot\autologs\jobdata-$LogDate.log"
 
 Remove-Item -LiteralPath "$ScriptRoot\autologs\resume.csv" -Force
 
