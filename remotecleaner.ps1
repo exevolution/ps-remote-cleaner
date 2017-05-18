@@ -1,19 +1,61 @@
-﻿#requires -Version 3.0
-#requires -RunAsAdministrator
-# Version 1.4.1.0
+# requires -Version 3.0
+# Version 1.4.0.3
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 # Timer Start
-$Runtime0 = Get-Date
+$StopWatch1 = [System.Diagnostics.Stopwatch]::StartNew()
 
 $VerbosePreference = "SilentlyContinue"
-$DelProfPreference = "Unattended"
 
-# Import required module
+$DelProfPreference = "Unattended"
+$DNSNameLengthLimit = 15
+
+
+# Import AD module
 If (!(Get-Module ActiveDirectory))
 {
     Import-Module -Name ActiveDirectory -ErrorAction Stop
 }
+
+# Paths to commonly used folders
+$BinaryPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Bin"
+$PSToolsPath = Join-Path -Path "$BinaryPath" -ChildPath "PSTools"
+$DelProfPath = Join-Path -Path "$BinaryPath" -ChildPath "DelProf2 1.6.0"
+$DownloadPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Downloads"
+
+# Check for existance of standalone applications, download and extract if missing.
+If (!(Test-Path "$BinaryPath"))
+{
+    New-Item -ItemType Directory "$BinaryPath"
+}
+
+If (!(Test-Path "$DownloadPath"))
+{
+    New-Item -ItemType Directory "$DownloadPath"
+}
+
+If (!(Test-Path "$PSToolsPath"))
+{
+    # Add ability to (de)compress ZIP files
+    Add-Type -AssemblyName "system.io.compression.filesystem"
+
+    New-Item -ItemType Directory "$PSToolsPath"
+    $PSToolsDownloadUri = "https://download.sysinternals.com/files/PSTools.zip"
+    $PSToolsDownloadDestination = Join-Path -Path "$DownloadPath" -ChildPath "PSTools.zip"
+    Invoke-WebRequest -Uri "$PSToolsDownloadUri" -OutFile "$PSToolsDownloadDestination"
+    [io.compression.zipfile]::ExtractToDirectory($PSToolsDownloadDestination, $PSToolsPath)
+}
+
+If (!(Test-Path "$DelProfPath"))
+{
+    New-Item -ItemType Directory "$DelProfPath"
+    $DelProf2DownloadUri = "https://helgeklein.com/downloads/DelProf2/current/Delprof2%201.6.0.zip"
+    $DelProf2DownloadDestination = Join-Path -Path "$DownloadPath" -ChildPath "DelProf2-1.6.0.zip"
+    Invoke-WebRequest -Uri "$DelProf2DownloadUri" -OutFile "$DelProf2DownloadDestination"
+    [io.compression.zipfile]::ExtractToDirectory($DelProf2DownloadDestination, $BinaryPath)
+}
+
+
 
 # Declare necessary, or maybe unnecessary global vars for functions
 $Global:HostName = $Null
@@ -33,14 +75,28 @@ $PSWindow.BufferSize = $NewSize
 # Define Functions
 # ----------------
 
+Function Test-PathEx
+{
+    Param($Path)
+
+    If (Test-Path $Path)
+    {
+        $True
+    }
+    Else
+    {
+        $Parent = Split-Path $Path
+        [System.IO.Directory]::EnumerateFiles($Parent) -Contains $Path
+    }
+}
+
 Function Get-FreeSpace
 {
     # Define the FreeSpace calculator
     $Global:FreeSpace = Get-WmiObject Win32_LogicalDisk -ComputerName $Global:HostName |
     Where-Object { $_.DeviceID -eq "$DriveLetter" } |
-    Select-Object @{Name="Computer Name"; Expression={ $_.SystemName } }, @{Name="Drive"; Expression={ $_.Caption } }, @{Name="Free Space (" + $Args[0..$Args.Length] + ")"; Expression={ "$([math]::round($_.FreeSpace / 1GB,2))GB" } } |
-    Format-Table -AutoSize |
-    Tee-Object -Append -File "$LogPath\bottleneckreport-$LogDate.txt"
+    Select-Object @{Name="Computer Name"; Expression={ $_.SystemName } }, @{Name="Drive"; Expression={ $_.Caption } }, @{Name="Free Space (" + $Args[0..$Args.Length] + ")"; Expression={ "$([math]::Round($_.FreeSpace / 1GB,2))GB" } } |
+    Format-List
 
     Return $Global:FreeSpace
 }
@@ -66,7 +122,7 @@ Function Run-DelProf2
     'Deleting Stale User Profiles With DelProf2.'
     'Please wait... This may take several minutes.'
     ''
-    $Global:DelProf = Start-Process -FilePath "$PSScriptRoot\DelProf2\DelProf2.exe" -ArgumentList "/c:$Global:HostName /ed:$ShortUser /ed:Admin* /ed:00* /ed:Default* /ed:Public* $VarAttend" -Wait -PassThru
+    $Global:DelProf = Start-Process -FilePath "$DelProfPath\DelProf2.exe" -ArgumentList "/c:$Global:HostName /ed:$ShortUser`* /ed:Admin* /ed:00* /ed:Default* /ed:Public* /ed:MsDts* $VarAttend /ntuserini" -Wait -PassThru
     $Global:DelProfExit = $Global:DelProf.ExitCode
     If ($Global:DelProfExit -eq "0")
     {
@@ -91,19 +147,39 @@ Function Run-DelProf2
 
 Function Resolve-Host
 {
-    If ($Global:HostEntry -As [IPAddress])
+    [CmdletBinding(SupportsShouldProcess=$True, ConfirmImpact="Medium")]
+
+    Param(
+        [Parameter(Mandatory=$True, Position=0)]
+        [ValidateNotNullOrEmpty()]
+        [String]$HostName
+    )
+    Begin
     {
-        $Global:HostIP = $Global:HostEntry
-        $Global:HostInfo = [System.Net.Dns]::GetHostEntry($Global:HostIP)
-        $Global:HostName = $Global:HostInfo.HostName
     }
-    Else
+
+    Process
     {
-        $Global:HostName = $Global:HostEntry.ToUpper()
-        $Global:HostInfo = Resolve-DnsName -Name $Global:HostName
-        $Global:HostIP = $Global:HostInfo.IPAddress
+        If ($HostName -As [IPAddress])
+        {
+            $HostIP = $HostName
+            $HostInfo = [System.Net.Dns]::GetHostEntry($HostIP)
+            $HostName = $HostInfo.HostName
+        }
+        Else
+        {
+            $HostName = $HostName.ToUpper()
+            $HostIP = @([System.Net.Dns]::GetHostAddresses($HostName).IPAddressToString)[0]
+        }
+
     }
-    Return
+
+    End
+    {
+        $Global:HostName = $HostName
+        $Global:HostIP = $HostIP
+        Return $HostName,$HostIP | Out-Null
+    }
 }
 
 Function Remove-WithProgress
@@ -200,7 +276,7 @@ Function Remove-WithProgress
         $T0 = Get-Date
 
         # Enumerate folders with 0 files
-        $EmptyFolders = @(Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory) | Where-Object {($_.GetFiles()).Count -eq 0} | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
+        $EmptyFolders = @(Get-ChildItem -Force -Path "$Path" -Recurse -Attributes Directory -ErrorAction SilentlyContinue) | Where-Object {($_.GetFiles()).Count -eq 0} | Sort-Object -Property @{ Expression = {$_.FullName.Split('\').Count} } -Descending
     
         # How many empty folders for progress bars
         $EmptyCount = ($EmptyFolders | Measure-Object).Count
@@ -304,7 +380,7 @@ Do
         {
             "Cancelling"
             "Please login with valid credentials to continue"
-            Sleep 3
+            Start-Sleep -Seconds 3
             Exit
         }
     ElseIf (Test-Credential $AdminCreds)
@@ -314,7 +390,7 @@ Do
     Else
         {
             "Invalid username or password"
-            Sleep 3
+            Start-Sleep -Seconds 3
         }
 }
 Until ($ValidAdmin -eq $True)
@@ -330,7 +406,7 @@ Until ($ValidAdmin -eq $True)
 "Credentials validated, continuing"
 
 # Begin main program
-While ($True)
+Do
 {
 # Get current date for logs
 $LogDate = (Get-Date).ToString('yyyy-MM-dd')
@@ -364,19 +440,23 @@ Clear-Host
 Do
 {
 
-# If computer name is a blank string, loop
+# If IP entry does not resolve as an IP, loop
 Do
 {
-    $Global:HostEntry = Read-Host -Prompt 'Enter the computer name or IP address'
-    Resolve-Host
+    $HostEntry = (Read-Host -Prompt 'Enter the computer name or IP address') -replace "`r`n","" -replace " ","" -replace "`t",""
+    If ($HostEntry.Length -gt $DNSNameLengthLimit)
+    {
+        $HostEntry = $HostEntry.Substring(0,$DNSNameLengthLimit)
+    }
+    Resolve-Host -HostName $HostEntry
 }
-Until ($Global:HostIP -as [IPAddress])
+Until ($HostIP -as [IPAddress])
 
 
 ''
 '-------------------------------------------------------'
-"Computer Name: $Global:HostName"
-"IP Address: $Global:HostIP"
+"Computer Name: $HostName"
+"IP Address: $HostIP"
 "Admin Username: $LocalAdmin"
 '-------------------------------------------------------'
 ''
@@ -412,7 +492,7 @@ $Global:Domain = $Global:Domain.ToUpper()
 
 # Get logged in username, including domain name
 $Global:DomainUser = $Null
-$Global:DomainUser = (Get-WmiObject Win32_ComputerSystem -Computer $Global:HostName).UserName
+$Global:DomainUser = $ComputerSys.UserName
 
 # If no user is logged in, prompt for the assigned user
 If ($Global:DomainUser -eq $Null)
@@ -423,17 +503,19 @@ If ($Global:DomainUser -eq $Null)
 
     # Store all non system profiles
     $AllProfiles = $Null
-    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile")} | Sort-Object LastUseTime -Descending
+    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile") -and ($_.LocalPath -notmatch "MsDts")} | Sort-Object LastUseTime -Descending
 
     ForEach ($Profile in $AllProfiles)
     {
         $AccountName = $Null
         $SID = ($Profile | Select-Object -ExpandProperty sid)
+        $UserFolder = $Profile.LocalPath.Split("\")[-1]
         $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
         If ($AccountName -eq $Null)
         {
-            ''
-            "$SID does not exist in Active Directory, skipping"
+            "Folder: '$UserFolder'"
+            "SID: '$SID'"
+            "Account does not exist in Active Directory. Skipping"
             Continue
         }
         $UserArray += "$AccountName"
@@ -516,27 +598,35 @@ $ProfileStatus = $ActiveProfile.Status
 If (($Corrupt -band $ProfileStatus) -eq $Corrupt)
 {
     Write-Warning "PROFILE CORRUPT! User profile rebuild necessary. Quitting."
-    Sleep 10
+    Start-Sleep -Seconds 10
     Exit
 }
 
 # Per-admin log path setup
-$AdminLogPath = ($LocalAdmin).Replace("$Global:Domain", '')
+$LogRoot = ($LocalAdmin).Replace("$Global:Domain", '')
 
 # Check for per-user log directory, create if it does not exist
-If (! (Test-Path "$PSScriptRoot\logs\$AdminLogPath"))
+If (! (Test-Path "$PSScriptRoot\Logs\$LogRoot"))
 {
     "Created log directory"
-    New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath"
+    New-Item -ItemType Directory -Path "$PSScriptRoot\Logs\$LogRoot"
+    $LogPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Logs\$LogRoot"
 }
-If (! (Test-Path "$PSScriptRoot\logs\$AdminLogPath\errors"))
+Else
 {
-    "Created log directory"
-    New-Item -ItemType Directory -Path "$PSScriptRoot\logs\$AdminLogPath\errors"
+    $LogPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Logs\$LogRoot"
 }
 
-$LogPath = "$PSScriptRoot\logs\$AdminLogPath"
-$ErrorLogPath = "$PSScriptRoot\logs\$AdminLogPath\errors"
+If (! (Test-Path "$PSScriptRoot\Logs\$LogRoot\errors"))
+{
+    "Created log directory"
+    New-Item -ItemType Directory -Path "$PSScriptRoot\Logs\$LogRoot\errors"
+    $ErrorLogPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Logs\$LogRoot\errors"
+}
+Else
+{
+    $ErrorLogPath = Join-Path -Path "$PSScriptRoot" -ChildPath "Logs\$LogRoot\errors"
+}
 
 # Log pruning
 $LogLimit = (Get-Date).AddDays(-14)
@@ -545,18 +635,18 @@ Get-ChildItem -Path $LogPath -Recurse -Force -Attributes !Directory | Where-Obje
 # Grab local path from active profile
 $ProfilePath = $ActiveProfile.LocalPath
 
-# Convert 
+# Convert to UNC compatible
 $ProfileShare = $ProfilePath -replace ':', '$'
 $DriveLetter = $ProfilePath.Substring(0,2)
 
-$Path0 = "\\$Global:HostName\$ProfileShare"
+$Path0 = Join-Path -Path "\\$Global:HostName" -ChildPath "$ProfileShare"
 
 # Calculate free space before beginning
 ''
 "Checking Free Space on $Global:HostName, drive $DriveLetter"
 ''
 '-------------------------------------------------------'
-Get-FreeSpace Start
+Get-FreeSpace Start | Tee-Object -FilePath "$LogPath\bottleneckreport-$LogDate.txt" -Append
 '-------------------------------------------------------'
 
 # Cleanup temp files and IE cache
@@ -566,7 +656,7 @@ Do
     "Domain: {0}" -F $ComputerSys.Domain
     "Host: {0}" -F $Global:HostName
     "Username: {0}" -F $ShortUser
-    "UNC Path: \\{0}\{1}" -F $Global:HostName,$ProfileShare
+    "UNC Path: {0}" -F $Path0
     "Log Path: {0}\" -F $LogPath
     ''
     'Choose one of the following options to continue'
@@ -574,8 +664,9 @@ Do
     '[1] Automated Cleanup'
     "[2] Stale Profile Cleanup ($DelProfPreference)"
     "[3] Logoff $ShortUser"
-    '[P] Attempt Printer Fix (Not Working)'
+    "[E] Explore Files on $Global:HostName"
     "[L] Open Logs"
+    '[P] Attempt Printer Fix (Not Working)'
     '[O] Options Menu'
     '[D] Do Nothing, Move To Next Computer'
     '[Q] Quit'
@@ -587,94 +678,141 @@ Do
         1
         {
             # Start cleanup timer
-            $TotalTime0 = Get-Date
+            $StopWatch2 = [System.Diagnostics.Stopwatch]::StartNew()
 
             # Give the user a chance to cancel before changes are made
             Write-Warning 'This makes permanent changes to the system. Press Ctrl+C now to cancel'
-            Sleep 5
+            Start-Sleep -Seconds 5
 
-            # WINDOWS TEMP
-            $Path = "$Path0\AppData\Local\Temp"
+            <#
+            Template for adding more cleanup locations.
+
+            $Path = Join-Path -Path "$Path0" -ChildPath "" | Join-Path -ChildPath "" | Join-Path -ChildPath "" | Join-Path -ChildPath "" | Join-Path -ChildPath "" | Join-Path -ChildPath "" | Join-Path -ChildPath ""
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Windows Temp Files'
             }
 
+            #>
+
+            # USER WINDOWS TEMP
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Temp"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Profile Windows Temp Files'
+            }
+
+            # TEMP ON C:
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "c$" | Join-Path -ChildPath "Temp"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Root Temp Files'
+            }
+
+            # WINDOWS DIRECTORY TEMP
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "c$" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Temp"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Windows Temp Files'
+            }
+
+            # PROPATCHES
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "c$" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "ProPatches" | Join-Path -ChildPath "Patches"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Patch Installer Files'
+            }
+
             # IE CACHE W7
-            $Path = "$Path0\AppData\Local\Microsoft\Windows\Temporary Internet Files"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Temporary Internet Files"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 7)'
             }
 
+            <#
+            # MSO CACHE ON C:
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "c$" | Join-Path -ChildPath "MSOCache"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Root Microsoft Office Cache'
+            }
+            #>
+
             # IE COOKIES W7
-            $Path = "$Path0\AppData\Roaming\Microsoft\Windows\Cookies"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "Cookies"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cookies (Windows 7)'
             }
 
             # IE CACHE W8.1
-            $Path = "$Path0\AppData\Local\Microsoft\Windows\INetCache"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCache"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cache Files (Windows 8.1)'
             }
 
             # IE COOKIES w8.1
-            $Path = "$Path0\AppData\Local\Microsoft\Windows\INetCookies"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Microsoft" | Join-Path -ChildPath "Windows" | Join-Path -ChildPath "INetCookies"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Cookies (Windows 8.1)'
             }
 
+            # CRASH DUMPS
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "CrashDumps"
+            If (Test-Path "$Path")
+            {
+                Remove-WithProgress -Path "$Path" -Title 'Internet Exploder Crash Dumps'
+            }
+
             # CHROME CACHE
-            $Path = "$Path0\AppData\Local\Google\Chrome\User Data\Default\Cache"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Cache"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Google Chrome Cache Files'
             }
 
             # CHROME MEDIA CACHE
-            $Path = "$Path0\AppData\Local\Google\Chrome\User Data\Default\Media Cache"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "User Data" | Join-Path -ChildPath "Default" | Join-Path -ChildPath "Media Cache"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Google Chrome Media Cache Files'
             }
 
             # GOOGLE CHROME UPDATES
-            $Path = "$Path0\AppData\Local\Google\Update"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Local" | Join-Path -ChildPath "Google" | Join-Path -ChildPath "Chrome" | Join-Path -ChildPath "Update"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Google Chrome Update Files'
             }
 
             # FIVE9 LOGS
-            $Path = "$Path0\AppData\Roaming\Five9\Logs"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Roaming" | Join-Path -ChildPath "Five9" | Join-Path -ChildPath "Logs"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Five9 Log Files'
             }
                 
             # FIVE9 INSTALLS
-            $Path = "$Path0\AppData\Roaming\Five9.*"
+            $Path = Join-Path -Path "$Path0" -ChildPath "AppData" | Join-Path -ChildPath "Roaming" | Join-Path -ChildPath "Five9.*"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Old Five9 Installations'
             }
 
             # C: DRIVE RECYCLE BIN
-            $Path = "\\$Global:Hostname\c$\`$Recycle.Bin"
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "c$" | Join-Path -ChildPath "`$Recycle.Bin"
             If (Test-Path "$Path")
             {
                 Remove-WithProgress -Path "$Path" -Title 'Recycle Bin Files on drive C:'
             }
 
             # D: DRIVE RECYCLE BIN
-            $Path = "\\$Global:Hostname\d$\`$Recycle.Bin"
+            $Path = Join-Path -Path "\\$Global:Hostname" -ChildPath "d$" | Join-Path -ChildPath "`$Recycle.Bin"
             If (Test-Path "$Path")
             {
-                # Call deletion with progress bar
                 Remove-WithProgress -Path "$Path" -Title 'Recycle Bin Files on drive D:'
             }
 
@@ -684,18 +822,25 @@ Do
             Run-DelProf2 Unattended
             '--------------------------------------------------'
 
-            $TotalTime1 = Get-Date
-            $TotalTime2 = New-TimeSpan -Start $TotalTime0 -End $TotalTime1
             ''
-            "Automated Cleanup Completed in {0:d2}:{1:d2}:{2:d2}" -F $TotalTime2.Hours,$TotalTime2.Minutes,$TotalTime2.Seconds
+            "Automated Cleanup Completed in {0:d2}:{1:d2}:{2:d2}" -F $StopWatch2.Elapsed.Hours,$StopWatch2.Elapsed.Minutes,$StopWatch2.Elapsed.Seconds
 
-            $ManualCleanup = $Null
+            If ($ManualCleanup)
+            {
+                Remove-Variable ManualCleanup -Force
+            }
+
             $ManualCleanup = Get-WmiObject Win32_LogicalDisk -ComputerName $Global:HostName | Where-Object { $_.DeviceID -eq "$DriveLetter" -and $_.FreeSpace -lt 1073741824 }
             If ($ManualCleanup -ne $Null)
             {
-            "Additional Cleanup needed on $Global:HostName - User ID: $ShortUser | Less than 1GB free after automated cleanup" | Tee-Object -File "$LogPath\manual-$LogDate.txt" -Append
+            "Additional Cleanup needed on $Global:HostName - User ID: $ShortUser | Less than 1GB free after automated cleanup" | Tee-Object -FilePath "$LogPath\manual-$LogDate.txt" -Append
             }
-            Get-FreeSpace Finish
+            Get-FreeSpace Automatic Cleanup | Tee-Object -FilePath "$LogPath\bottleneckreport-$LogDate.txt" -Append
+
+            # Log elapsed time
+
+            "Elapsed Time: {0:d2}:{1:d2}:{2:d2}" -F $StopWatch1.Elapsed.Hours,$StopWatch1.Elapsed.Minutes,$StopWatch1.Elapsed.Seconds | Tee-Object -FilePath "$LogPath\runtime-$LogDate.txt" -Append
+
             Continue
         }
         2
@@ -703,26 +848,148 @@ Do
             # DelProf
             Run-DelProf2 $DelProfPreference
             '*******************************************************'
-            Get-FreeSpace $DelProfPreference DelProf2
+            Get-FreeSpace $DelProfPreference DelProf2 | Tee-Object -FilePath "$LogPath\bottleneckreport-$LogDate.txt" -Append
             '*******************************************************'
             Continue
         }
         3
         {
             $Confirm = $Null
-            $Confirm = Read-Host "Are you sure you want to force $ShortUser to log off $Global:HostName? (Y/N)"
+            $Confirm = Read-Host "Are you sure you want to force $ShortUser to log off $Global:HostName`? (Y/N)"
 
             If ($Confirm -eq "Y")
             {
                 # Log user off machine
                 $ShortUser
-                reg delete "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC
-                & reg add "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 1
+                &reg delete "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC
+                &reg add "\\es-srv-0315\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 1
                 $UserSession = ((quser /server:$Global:HostName | Where-Object { $_ -match $ShortUser }) -Split ' +')[2]
-                logoff $UserSession /server:$Global:HostName
-                & reg add "\\$Global:HostName\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 0
+                &logoff $UserSession /server:$Global:HostName
+                &reg add "\\$Global:HostName\HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v AllowRemoteRPC /t REG_DWORD /d 0
             }
             Continue
+        }
+        E
+        {
+            &explorer "\\$Global:HostName\$ProfileShare\"
+        }
+        L
+        {
+            Do
+            {
+                ''
+                'Daily Logs'
+                '-------------------------------------------------------'
+                "[1] Open Bottleneck Log: bottleneckreport-$DateSelect.txt"
+                "[2] Open Runtime Log: runtime-$DateSelect.txt"
+                "[3] Open Manual Log: manual-$DateSelect.txt"
+                "[4] Open All Logs for $DateSelect"
+                "[5] Open Log Folder"
+                "[6] Back 1 Day"
+                "[7] Back 7 Days"
+                "[8] Set to Today's Date"
+                "[B] Return to Main Menu"
+                '-------------------------------------------------------'
+
+                $MenuOption = Read-Host "Choice"
+                Switch ($MenuOption)
+                {
+                    1
+                    {
+                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\bottleneckreport-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
+                        }
+                        Continue
+                    }
+                    2
+                    {
+                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\runtime-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
+                        }
+                        Continue
+                    }
+                    3
+                    {
+                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\manual-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
+                        }
+                        Continue
+                    }
+                    4
+                    {
+                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\bottleneckreport-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
+                        }
+                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\runtime-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
+                        }
+                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
+                        {
+                            Invoke-Item "$LogPath\manual-$DateSelect.txt"
+                        }
+                        Else
+                        {
+                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
+                        }
+                        Continue
+                    }
+                    5
+                    {
+                        Invoke-Item -LiteralPath "$LogPath"
+                    }
+                    6
+                    {
+                    $DateSelect = ([datetime]$DateSelect).AddDays(-1).ToString("yyyy-MM-dd")
+                    "Log Date set to $DateSelect"
+                    }
+                    7
+                    {
+                    $DateSelect = ([datetime]$DateSelect).AddDays(-7).ToString("yyyy-MM-dd")
+                    "Log Date set to $DateSelect"
+                    }
+                    8
+                    {
+                    $DateSelect = (Get-Date).ToString('yyyy-MM-dd')
+                    "Log Date set to $DateSelect"
+                    }
+                    B
+                    {
+                        "Returning to main menu"
+                        Break
+                    }
+                    Default
+                    {
+                        "Unrecognized input"
+                        $MenuOption = $Null
+                    }
+                }
+            }
+            While ($MenuOption -ne "B")
         }
         P
         {
@@ -809,124 +1076,6 @@ Do
             $RemoteWinRM.Stop()
             Continue
         }
-        L
-        {
-            Do
-            {
-                ''
-                'Daily Logs'
-                '-------------------------------------------------------'
-                "[1] Open Bottleneck Log: bottleneckreport-$DateSelect.txt"
-                "[2] Open Runtime Log: runtime-$DateSelect.txt"
-                "[3] Open Manual Log: manual-$DateSelect.txt"
-                "[4] Open All Logs for $DateSelect"
-                "[5] Open Log Folder"
-                "[6] Back 1 Day"
-                "[7] Back 7 Days"
-                "[8] Set to Today's Date"
-                "[B] Return to Main Menu"
-                '-------------------------------------------------------'
-
-                $MenuOption = Read-Host "Choice"
-                Switch ($MenuOption)
-                {
-                    1
-                    {
-                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\bottleneckreport-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
-                        }
-                        Continue
-                    }
-                    2
-                    {
-                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\runtime-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
-                        }
-                        Continue
-                    }
-                    3
-                    {
-                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\manual-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
-                        }
-                        Continue
-                    }
-                    4
-                    {
-                        If (Test-Path "$LogPath\bottleneckreport-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\bottleneckreport-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\bottleneckreport-$DateSelect.txt does not exist"
-                        }
-                        If (Test-Path "$LogPath\runtime-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\runtime-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\runtime-$DateSelect.txt does not exist"
-                        }
-                        If (Test-Path "$LogPath\manual-$DateSelect.txt")
-                        {
-                            notepad "$LogPath\manual-$DateSelect.txt"
-                        }
-                        Else
-                        {
-                            "Log file $LogPath\manual-$DateSelect.txt does not exist"
-                        }
-                        Continue
-                    }
-                    5
-                    {
-                        Invoke-Item -LiteralPath "$LogPath"
-                    }
-                    6
-                    {
-                    $DateSelect = ([datetime]$DateSelect).AddDays(-1).ToString("yyyy-MM-dd")
-                    "Log Date set to $DateSelect"
-                    }
-                    7
-                    {
-                    $DateSelect = ([datetime]$DateSelect).AddDays(-7).ToString("yyyy-MM-dd")
-                    "Log Date set to $DateSelect"
-                    }
-                    8
-                    {
-                    $DateSelect = (Get-Date).ToString('yyyy-MM-dd')
-                    "Log Date set to $DateSelect"
-                    }
-                    B
-                    {
-                        "Returning to main menu"
-                        Break
-                    }
-                    Default
-                    {
-                        "Unrecognized input"
-                        $MenuOption = $Null
-                    }
-                }
-            }
-            While ($MenuOption -ne "B")
-        }
         O
         {
             Do
@@ -987,18 +1136,16 @@ Do
     D
         {
             "No further changes will be made to $Global:HostName"
-            Sleep 1
+            Get-FreeSpace Finish | Out-File -FilePath "$LogPath\bottleneckreport-$LogDate.txt" -Append
+            Start-Sleep -Seconds 1
         }
 
     Q
         {
             ''
             "Quitting. No further changes will be made to $Global:HostName"
-            '*******************************************************'
-            Get-FreeSpace Finish
-            '*******************************************************'
-            Sleep 1
-            Exit
+            Get-FreeSpace Finish | Out-File -FilePath "$LogPath\bottleneckreport-$LogDate.txt" -Append
+            Start-Sleep -Seconds 1
         }
     Default
         {
@@ -1006,16 +1153,15 @@ Do
         }
     }
 }
-Until ($MenuOption -eq 'D')
+Until ($MenuOption -eq 'D' -or $MenuOption -eq 'Q')
 
-# Clean all variables created this session to prevent issues after loop
-$SysVars = Get-Variable | Select-Object -ExpandProperty Name
-$SysVars += 'sysvars'
-Get-Variable | Where-Object {$SysVars -notcontains $_.Name} | ForEach {Remove-Variable $_}
+    If ($MenuOption -eq 'D')
+    {
+        # Clear VARs and break from loop to quit
+        $SysVars = Get-Variable | Select-Object -ExpandProperty Name
+        $SysVars += 'sysvars'
+        Get-Variable | Where-Object {$SysVars -notcontains $_.Name} | ForEach-Object {Remove-Variable $_}
+        Continue
+    }
 }
-
-# Elapsed Time, log to file
-$Runtime1 = Get-Date
-$Runtime2 = New-TimeSpan -Start $Runtime0 -End $Runtime1
-
-"Elapsed Time: {0:d2}:{1:d2}:{2:d2}" -F $Runtime2.Hours,$Runtime2.Minutes,$Runtime2.Seconds | Tee-Object "$LogPath\runtime-$LogDate.txt" -Append
+While ($MenuOption -ne 'Q')
