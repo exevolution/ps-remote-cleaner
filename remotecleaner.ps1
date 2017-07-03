@@ -1,5 +1,5 @@
 # requires -Version 3.0
-# Version 1.5.0.2
+# Version 1.5.0.3
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 
@@ -196,7 +196,7 @@ Function Resolve-Host
         Else
         {
             $ComputerName = $ComputerName.ToUpper()
-            $IP = [System.Net.Dns]::GetHostAddresses($ComputerName).IPAddressToString
+            $IP = [System.Net.Dns]::GetHostAddresses($ComputerName) | Where-Object {$_.AddressFamily -eq "InterNetwork"} | Select-Object -ExpandProperty IPAddressToString
         }
     }
 
@@ -459,10 +459,13 @@ Do
             }
             Catch
             {
+                Write-Host "Failed to resolve $HostEntry!" -ForegroundColor Yellow
+                Write-Host $_.Exception.Message -ForegroundColor Red
                 If ($Resolved)
                 {
                     Remove-Variable Resolved
                 }
+                Continue
             }
         }
         Until ($Resolved)
@@ -1061,8 +1064,6 @@ Do
             {
                 "`nNo further changes will be made to $HostName"
                 Write-Host ("`n" + ('-' * 130))
-                Get-FreeSpace -ComputerName $HostName -DriveLetter $DriveLetter | Format-Table
-                Write-Host (('-' * 130) + "`n")
                 Start-Sleep -Seconds 1
                 $Quit = $False
                 $Next = $True
@@ -1072,8 +1073,6 @@ Do
             {
                 "`nQuitting. No further changes will be made to $HostName"
                 Write-Host ("`n" + ('-' * 130))
-                Get-FreeSpace -ComputerName $HostName -DriveLetter $DriveLetter | Format-Table
-                Write-Host (('-' * 130) + "`n")
                 Start-Sleep -Seconds 1
                 $Quit = $True
                 $Next = $True
