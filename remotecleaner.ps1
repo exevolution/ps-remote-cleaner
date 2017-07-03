@@ -1,15 +1,13 @@
 # requires -Version 3.0
-# Version 1.4.0.3
+# Version 1.4.0.4
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 # Timer Start
 $StopWatch1 = [System.Diagnostics.Stopwatch]::StartNew()
 
 $VerbosePreference = "SilentlyContinue"
-
 $DelProfPreference = "Unattended"
 $DNSNameLengthLimit = 15
-
 
 # Import AD module
 If (!(Get-Module ActiveDirectory))
@@ -534,7 +532,7 @@ If ($Global:DomainUser -eq $Null)
     }
     Else
     {
-        $ok = $Null
+        $Ok = $Null
         Do
         {
             # Null important variables for loop
