@@ -6,7 +6,7 @@
 # Get current local username
 $LocalAdmin = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 # Per-admin log path setup
-$LogRoot = ($LocalAdmin).Replace("$Global:Domain", '')
+$LogRoot = ($LocalAdmin).Replace("$env:USERDOMAIN\", '')
 
 # Make log folders if they do not exist
 If (!(Test-Path "$PSScriptRoot\Logs\$LogRoot"))
@@ -505,14 +505,6 @@ Do
 
     $ComputerSys =  Get-WmiObject Win32_ComputerSystem -Computer $HostName
 
-    # Detect domain name, remove top level domain, convert to uppercase for future Trim operation
-    $Global:Domain = $ComputerSys.Domain -replace '.com', '' -replace '.net', '' -replace '.org', ''
-    $Global:Domain = $Global:Domain + "\"
-    $Global:Domain = $Global:Domain.ToUpper()
-
-    # Get logged in username, including domain name
-    $Global:DomainUser = $ComputerSys.UserName
-
     # Create blank array
     $UserArray = @()
 
@@ -624,7 +616,7 @@ Do
             Remove-Variable Next
         }
         ''
-        "Domain: {0}" -F $ComputerSys.Domain
+        "Domain: {0}" -F $env:USERDNSDOMAIN
         "Host: {0}" -F $HostName
         "Username: {0}" -F $ShortUser
         "UNC Path: {0}" -F $Path0
