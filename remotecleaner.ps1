@@ -1,5 +1,5 @@
 # requires -Version 3.0
-# Version 1.4.0.4
+# Version 1.4.1.0
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 # Timer Start
@@ -489,105 +489,83 @@ $Global:Domain = $Global:Domain + "\"
 $Global:Domain = $Global:Domain.ToUpper()
 
 # Get logged in username, including domain name
-$Global:DomainUser = $Null
 $Global:DomainUser = $ComputerSys.UserName
 
-# If no user is logged in, prompt for the assigned user
-If ($Global:DomainUser -eq $Null)
+# Create blank array
+$UserArray = @()
+
+# Store all non system profiles
+$AllProfiles = @(Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName) | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile") -and ($_.LocalPath -notmatch "MsDts")} | Sort-Object LastUseTime -Descending
+
+ForEach ($Profile in $AllProfiles)
 {
-    # Create blank array (forced)
-    $UserArray = $Null
-    $UserArray = @()
-
-    # Store all non system profiles
-    $AllProfiles = $Null
-    $AllProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $Global:HostName | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile") -and ($_.LocalPath -notmatch "MsDts")} | Sort-Object LastUseTime -Descending
-
-    ForEach ($Profile in $AllProfiles)
+    If ($AccountName)
     {
-        $AccountName = $Null
-        $SID = ($Profile | Select-Object -ExpandProperty sid)
-        $UserFolder = $Profile.LocalPath.Split("\")[-1]
-        $AccountName = (Get-ADUser -Filter {SID -eq $SID} | Select-Object SamAccountName).SamAccountName
-        If ($AccountName -eq $Null)
-        {
-            "Folder: '$UserFolder'"
-            "SID: '$SID'"
-            "Account does not exist in Active Directory. Skipping"
-            Continue
-        }
-        $UserArray += "$AccountName"
+        Remove-Variable AccountName
     }
-
-    If (($UserArray | Measure-Object).Count -eq 0) {
-        "No valid user profiles on $Global:HostName. Please run again on a different computer"
-        Break
-    }
-    # Output it, ask user to select a menu option
-    ElseIf (($UserArray | Measure-Object).Count -eq 1)
+    $SID = $Profile | Select-Object -ExpandProperty SID
+    $UserFolder = $Profile.LocalPath.Split("\")[-1]
+    $AccountName = Get-ADUser -Filter {SID -eq $SID} | Select-Object -ExpandProperty SamAccountName
+    If (!($AccountName))
     {
-        ''
-        "Only 1 profile was detected, selecting {0}" -F $UserArray[0]
-        $SelectedUser = 0
+        "Folder: '$UserFolder'"
+        "SID: '$SID'"
+        "Account does not exist in Active Directory"
+        Continue
     }
-    Else
-    {
-        $Ok = $Null
-        Do
-        {
-            # Null important variables for loop
-            $SelectedUser = $Null
+    $UserArray += "$AccountName"
+}
 
-            # Display menu
-            ''
-            "Profile Listing (Most recently accessed on top)"
-            # Sort the hash table and output it
-            
-            $Number = 0
-            ForEach ($User in $UserArray)
-            {
-                $Number++
-                Write-Host "$Number`. $User"
-            }
-
-            # Ask user for numeric input
-            ''
-            $SelectedUser = Read-Host "Please select the assigned user"
-            $SelectedUser = $SelectedUser -as [int32]
-            If ($SelectedUser -eq $Null -or $SelectedUser -eq "")
-            {
-                ''
-                "You must enter a numeric value"
-                Continue
-            }
-            # Subtract 1 from input for 0 indexed array
-            $SelectedUser = $SelectedUser - 1
-            If ($SelectedUser -gt (($UserArray | Measure-Object).Count - 1))
-            {
-                ''
-                "You have entered a value out of range, please choose a correct value"
-                ''
-                Continue
-            }
-            $ok = $True
-        }
-        Until ($ok)
-
-    }
-    $ShortUser = $UserArray[$SelectedUser]
-    "Selected: $ShortUser"
-    ''
-
-    # Assume, based on entered information, the active profile
-    $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
+If (($UserArray | Measure-Object).Count -eq 0)
+{
+    "No valid user profiles on $Global:HostName. Please run again on a different computer"
+    Break
 }
 Else
 {
-    $ShortUser = ($Global:DomainUser).Replace("$Global:Domain", '')
-        
-    # Get the most recently used active profile, store local path as administrative share in variable
-    $ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
+    Do
+    {
+        If ($SelectedUser)
+        {
+            Remove-Variable SelectedUser
+        }
+
+        # Display menu
+        "`nProfile Listing (Most recently accessed on top)"
+        # Sort the hash table and output it
+            
+        $Number = 0
+        ForEach ($User in $UserArray)
+        {
+            $Number++
+            Write-Host "[$Number] $User"
+        }
+
+        # Ask user for numeric input
+        ''
+        [int32]$SelectedUser = Read-Host "Please select the assigned user"
+        If (!($SelectedUser -as [int32]))
+        {
+            "`nYou must enter a numeric value"
+            Continue
+        }
+        # Subtract 1 from input for 0 indexed array
+        $SelectedUser = $SelectedUser - 1
+        If ($SelectedUser -gt (($UserArray | Measure-Object).Count - 1))
+        {
+            "`nYou have entered a value out of range, please choose a correct value"
+            Continue
+        }
+        $Ok = $True
+    }
+    Until ($Ok)
 }
+$ShortUser = $UserArray[$SelectedUser]
+"Selected: $ShortUser"
+''
+
+# Assume, based on entered information, the active profile
+$ActiveProfile = Get-WmiObject -Class Win32_UserProfile -Computer $Global:HostName | Where-Object {$_.LocalPath -Match "$ShortUser"}
 
 # If profile status Bit Field includes 8 (corrupt profile), quit.
 $Corrupt = 8
