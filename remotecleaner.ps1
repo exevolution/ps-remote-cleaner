@@ -1,5 +1,5 @@
 # requires -Version 3.0
-# Version 1.5.0.0
+# Version 1.5.0.2
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 
@@ -7,9 +7,10 @@
 $LocalAdmin = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 # Per-admin log path setup
 $LogRoot = ($LocalAdmin).Replace("$env:USERDOMAIN\", '')
+$LogPath = "$PSScriptRoot\Logs\$LogRoot"
 
 # Make log folders if they do not exist
-If (!(Test-Path "$PSScriptRoot\Logs\$LogRoot"))
+If (!(Test-Path "$LogPath"))
 {
     "Created log directory"
     Try
@@ -18,12 +19,11 @@ If (!(Test-Path "$PSScriptRoot\Logs\$LogRoot"))
     }
     Catch
     {
-        Write-Host "Unhandled exception creating $PSScriptRoot\Logs\$LogRoot" -ForegroundColor Yellow
+        Write-Host "Unhandled exception creating $LogPath" -ForegroundColor Yellow
         Write-Host "Exception: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "Exception Type: $($_.Exception.GetType().FullName)" -ForegroundColor Red
     }
 }
-$LogPath = "$PSScriptRoot\Logs\$LogRoot"
 
 # Config options
 $VerbosePreference = "SilentlyContinue"
@@ -518,13 +518,12 @@ Do
             Remove-Variable AccountName
         }
         $SID = $Profile | Select-Object -ExpandProperty SID
-        $UserFolder = $Profile.LocalPath.Split("\")[-1]
         $AccountName = Get-ADUser -Filter {SID -eq $SID} | Select-Object -ExpandProperty SamAccountName
         If (!($AccountName))
         {
-            "Folder: '$UserFolder'"
-            "SID: '$SID'"
-            "Account does not exist in Active Directory"
+            Write-Host "User Profile: $($Profile.LocalPath.Split("\")[-1])"
+            Write-Host "SID: $SID"
+            Write-Host "Account does not exist in Active Directory"
             Continue
         }
         $UserArray += "$AccountName"
@@ -766,7 +765,7 @@ Do
                 }
 
                 # Remove Other Profiles
-                Write-Host "Attempting to delete $($OtherProfiles.Count) unused profiles"
+                Write-Host "Attempting to delete $(($OtherProfiles | Measure-Object).Count) unused profiles"
                 ForEach ($p in $OtherProfiles)
                 {
 
