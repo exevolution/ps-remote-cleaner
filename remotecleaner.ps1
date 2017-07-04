@@ -1,5 +1,5 @@
 # requires -Version 3.0
-# Version 1.5.0.4
+# Version 1.5.0.5
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 
@@ -424,7 +424,7 @@ Do
     $DateSelect = $LogDate
 
     Clear-Host
-    Write-Host '`
+    Write-Host '
                       ▄███████▄    ▄████████ ███▄▄▄▄   ███▄▄▄▄   ▄██   ▄     ▄▄▄▄███▄▄▄▄      ▄████████  ▄████████
                      ███    ███   ███    ███ ███▀▀▀██▄ ███▀▀▀██▄ ███   ██▄ ▄██▀▀▀███▀▀▀██▄   ███    ███ ███    ███
                      ███    ███   ███    █▀  ███   ███ ███   ███ ███▄▄▄███ ███   ███   ███   ███    ███ ███    █▀
@@ -621,17 +621,17 @@ Do
             Remove-Variable Next
         }
         ''
-        "Domain: {0}" -F $env:USERDNSDOMAIN
-        "Host: {0}" -F $HostName
-        "Username: {0}" -F $ShortUser
-        "UNC Path: {0}" -F $Path0
-        "Log Path: {0}\" -F $LogPath
+        "Domain: $env:USERDNSDOMAIN"
+        "Host: $HostName"
+        "Username: $ShortUser"
+        "UNC Path: $Path0"
+        "Log Path: $LogPath"
         ''
         'Choose one of the following options to continue'
         '-------------------------------------------------------'
         '[1] Automated Cleanup'
-        "[2] Stale Profile Cleanup ($DelProfPreference)"
-        "[3] Logoff $ShortUser"
+        "[2] Send Logoff Command"
+        "[3] Stale Profile Cleanup ($DelProfPreference)"
         "[E] Explore Files on $HostName"
         "[L] Open Logs"
         '[O] Options Menu'
@@ -641,6 +641,7 @@ Do
         $MainMenu = Read-Host 'Main Menu choice'
         Switch ($MainMenu)
         {
+            # Clean drives
             1
             {
                 # Give the user a chance to cancel before changes are made
@@ -805,15 +806,8 @@ Do
                 Get-FreeSpace -ComputerName $HostName -DriveLetter $DriveLetter | Format-Table
                 Write-Host (('-' * 130) + "`n")
             }
+            # Logoff user
             2
-            {
-                # DelProf
-                Run-DelProf2 $DelProfPreference
-                Write-Host ("`n" + ('-' * 130))
-                Get-FreeSpace -ComputerName $HostName -DriveLetter $DriveLetter | Format-Table
-                Write-Host (('-' * 130) + "`n")
-            }
-            3
             {
                 Try
                 {
@@ -825,12 +819,13 @@ Do
                     Break
                 }
 
-                $Proceed1 = Read-Host "Are you sure you want to force $ShortUser to log off $HostName`? YES to proceed (Case-sensitive)"
+                $Proceed1 = Read-Host "Are you sure you want to log off $ShortUser from $HostName`? YES to proceed (Case-sensitive)"
                 If ($Proceed1 -ceq "YES")
                 {
                     Try
                     {
                         $OSObject = Get-WmiObject Win32_OperatingSystem -ComputerName $HostName -ErrorAction Stop
+                        $OSObject.PSBase.Scope.Options.EnablePrivileges = $True
                         $OSObject.Win32Shutdown(0)
                     }
                     Catch
@@ -844,6 +839,7 @@ Do
                             Try
                             {
                                 $OSObject = Get-WmiObject Win32_OperatingSystem -ComputerName $HostName -ErrorAction Stop
+                                $OSObject.PSBase.Scope.Options.EnablePrivileges = $True
                                 $OSObject.Win32Shutdown(4)
                             }
                             Catch
@@ -870,23 +866,27 @@ Do
                                 }
                             }
                         }
-                        Else
-                        {
-                            Break
-                        }
+                        Break
                     }
                 }
-                Else
-                {
-                    Break
-                }
-                Continue
+                Break
             }
+            # Run DelProf2
+            3
+            {
+                # DelProf
+                Run-DelProf2 $DelProfPreference
+                Write-Host ("`n" + ('-' * 130))
+                Get-FreeSpace -ComputerName $HostName -DriveLetter $DriveLetter | Format-Table
+                Write-Host (('-' * 130) + "`n")
+            }
+            # Open Windows Explorer to UNC Path
             E
             {
                 &explorer "\\$HostName\$ProfileShare\"
                 Continue
             }
+            # Old Logging Stuff, WIP
             L
             {
                 Do
@@ -1008,6 +1008,7 @@ Do
                 }
                 Until ($LMBack)
             }
+            # Old Options Menu, WIP
             O
             {
                 Do
@@ -1063,6 +1064,7 @@ Do
                 }
                 Until ($Back -eq $True)
             }
+            # Restart main loop
             D
             {
                 "`nNo further changes will be made to $HostName"
@@ -1072,6 +1074,7 @@ Do
                 $Next = $True
                 Break
             }
+            # Quit
             Q
             {
                 "`nQuitting. No further changes will be made to $HostName"
