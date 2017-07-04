@@ -1,5 +1,5 @@
 # requires -Version 3.0
-# Version 1.5.0.3
+# Version 1.5.0.4
 # This PowerShell script is designed to perform regular maintainance on domain computers
 # If you encounter any errors, please contact Elliott Berglund x8981
 
@@ -9,20 +9,27 @@ $LocalAdmin = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $LogRoot = ($LocalAdmin).Replace("$env:USERDOMAIN\", '')
 $LogPath = "$PSScriptRoot\Logs\$LogRoot"
 
-# Make log folders if they do not exist
-If (!(Test-Path "$LogPath"))
+# Make log directory if it doesn't exist and start the transcript
+Try
 {
-    "Created log directory"
-    Try
+    If (!([System.IO.Directory]::Exists($LogPath)))
     {
-        New-Item -ItemType Directory -Path "$PSScriptRoot\Logs" -Name $LogRoot
+        New-Item -ItemType Directory -Path "$PSScriptRoot\Logs" -Name $LogRoot -ErrorAction Stop
     }
-    Catch
+    Else
     {
-        Write-Host "Unhandled exception creating $LogPath" -ForegroundColor Yellow
-        Write-Host "Exception: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "Exception Type: $($_.Exception.GetType().FullName)" -ForegroundColor Red
+        Write-Host "$LogPath already exists."
     }
+}
+Catch
+{
+    Write-Host "Unhandled exception creating $LogPath" -ForegroundColor Yellow
+    Write-Host "Exception: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Exception Type: $($_.Exception.GetType().FullName)" -ForegroundColor Red
+}
+Finally
+{
+    Start-Transcript -OutputDirectory $LogPath
 }
 
 # Config options
@@ -512,27 +519,27 @@ Do
     $UserArray = @()
 
     # Store all non system profiles
-    $AllProfiles = @(Get-WmiObject -Class Win32_UserProfile -ComputerName $HostName) | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile") -and ($_.LocalPath -notmatch "MsDts")} | Sort-Object LastUseTime -Descending
+    $AllProfiles = @(Get-WmiObject -Class Win32_UserProfile -ComputerName $HostName -Property *) | Where-Object {($_.LocalPath -notmatch "00") -and ($_.LocalPath -notmatch "Admin") -and ($_.LocalPath -notmatch "Default") -and ($_.LocalPath -notmatch "Public") -and ($_.LocalPath -notmatch "LocalService") -and ($_.LocalPath -notmatch "NetworkService") -and ($_.LocalPath -notmatch "systemprofile") -and ($_.LocalPath -notmatch "MsDts")} | Sort-Object LastUseTime -Descending
 
     ForEach ($Profile in $AllProfiles)
     {
-        If ($AccountName)
+        If ($ADAccount)
         {
-            Remove-Variable AccountName
+            Remove-Variable ADAccount
         }
         $SID = $Profile | Select-Object -ExpandProperty SID
-        $AccountName = Get-ADUser -Filter {SID -eq $SID} | Select-Object -ExpandProperty SamAccountName
-        If (!($AccountName))
+        $ADACcount = Get-ADUser -Filter {SID -eq $SID}
+        If (!($ADAccount))
         {
             Write-Host "User Profile: $($Profile.LocalPath.Split("\")[-1])"
             Write-Host "SID: $SID"
             Write-Host "Account does not exist in Active Directory"
             Continue
         }
-        $UserArray += "$AccountName"
+        $UserArray += $ADAccount
     }
 
-    If (($UserArray | Measure-Object).Count -eq 0)
+    If ($UserArray.Count -eq 0)
     {
         "No valid user profiles on $HostName. Please run again on a different computer"
         Break
@@ -547,27 +554,24 @@ Do
             }
 
             # Display menu
-            "`nProfile Listing (Most recently accessed on top)"
+            "`nProfile Listing"
             # Sort the hash table and output it
             
-            $Number = 0
-            ForEach ($User in $UserArray)
+            For ($i=0;$i -lt "$($UserArray.Count)"; $i++)
             {
-                $Number++
-                Write-Host "[$Number] $User"
+                Write-Host "[$($i + 1)] $($UserArray[$i].SamAccountName)"
             }
 
             # Ask user for numeric input
             ''
-            $SelectedUser = Read-Host "Please select the assigned user"
+            [int32]$SelectedUser = Read-Host "Please select the assigned user"
             If (!($SelectedUser -as [int32]))
             {
                 "`nYou must enter an integer value"
                 Continue
             }
             # Subtract 1 from input for 0 indexed array
-            $SelectedUser = $SelectedUser - 1
-            If ($SelectedUser -gt (($UserArray | Measure-Object).Count - 1))
+            If ($SelectedUser -gt $UserArray.Count)
             {
                 "`nYou have entered a value out of range, please choose one from the list above."
                 Continue
@@ -577,7 +581,7 @@ Do
         While ($True)
     }
 
-    $ShortUser = $UserArray[$SelectedUser]
+    $ShortUser = $UserArray[$SelectedUser - 1].SamAccountName
     "Selected: $ShortUser"
     ''
 
@@ -586,8 +590,7 @@ Do
     $OtherProfiles = $AllProfiles | Where-Object {$_.LocalPath.Split('\')[-1] -NotMatch $ShortUser}
 
     # If profile status Bit Field includes 8 (corrupt profile), quit.
-    $Corrupt = 8
-    If (($Corrupt -band $ActiveProfile.Status) -eq $Corrupt)
+    If ((8 -band $ActiveProfile.Status) -eq 8)
     {
         Write-Warning "PROFILE CORRUPT! User profile rebuild necessary. Quitting."
         Start-Sleep -Seconds 10
@@ -1087,3 +1090,4 @@ Do
     Until ($Next -eq $True)
 }
 Until ($Quit -eq $True)
+Stop-Transcript
